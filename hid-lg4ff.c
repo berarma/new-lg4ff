@@ -452,7 +452,7 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 	value = entry->report->field[0]->value;
 
 	cmd = 0x10 << effect->id;
-	if (old != NULL) {
+	if (old != NULL && effect->type == old->type && (effect->type != FF_PERIODIC || effect->u.periodic.waveform == old->u.periodic.waveform)) {
 		cmd += 0x0c;
 	}
 
