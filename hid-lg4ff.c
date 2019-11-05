@@ -700,7 +700,7 @@ static int lg4ff_playback(struct input_dev *dev, int effect_id, int value)
 		spin_lock_irqsave(&entry->report_lock, flags);
 
 		rvalue[0] = cmd;
-		rvalue[1] = 0x02;
+		rvalue[1] = 0x00;
 		rvalue[2] = 0x00;
 		rvalue[3] = 0x00;
 		rvalue[4] = 0x00;
@@ -717,7 +717,7 @@ static int lg4ff_playback(struct input_dev *dev, int effect_id, int value)
 		spin_lock_irqsave(&entry->report_lock, flags);
 
 		rvalue[0] = cmd;
-		rvalue[1] = 0x03;
+		rvalue[1] = 0x00;
 		rvalue[2] = 0x00;
 		rvalue[3] = 0x00;
 		rvalue[4] = 0x00;
