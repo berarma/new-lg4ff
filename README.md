@@ -14,6 +14,22 @@ The final goal is having a better force feedback support module that fully
 supports all hardware capabilities and provides a set of features similar to
 the Logitech Driving Force G920.
 
+## Requirements
+
+ - GNU Make
+ - GCC
+ - `linux-kbuild` and `linux-headers` packages matching the installed kernel version.
+
+## Build and install
+
+```
+# make
+# sudo make install
+# sudo depmod -A
+# sudo rmmod hid-logitech
+# sudo modprobe hid-logitech-new
+```
+
 ## Contributing
 
 Please, use the issues to discuss ideas, direction, etc.
