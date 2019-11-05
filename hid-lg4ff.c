@@ -533,9 +533,15 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 				}
 
 				if (slope_x > slope_y) {
+					if (slope_y == 0) {
+						slope_y = 1;
+					}
 					delta_x = min(15, slope_x / slope_y);
 					delta_y = 1;
 				} else {
+					if (slope_x == 0) {
+						slope_x = 1;
+					}
 					delta_x = 1;
 					delta_y = min(15, slope_y / slope_x);
 				}
@@ -595,9 +601,15 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 				slope_y = max_level - min_level;
 
 				if (slope_x > slope_y) {
+					if (slope_y == 0) {
+						slope_y = 1;
+					}
 					delta_x = min(15, slope_x / slope_y);
 					delta_y = 1;
 				} else {
+					if (slope_x == 0) {
+						slope_x = 1;
+					}
 					delta_x = 1;
 					delta_y = min(15, slope_y / slope_x);
 				}
