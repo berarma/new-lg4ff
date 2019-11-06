@@ -68,7 +68,6 @@ struct lg4ff_wheel_data {
 	u16 range;
 	const u16 min_range;
 	const u16 max_range;
-    u16 gain;
 #ifdef CONFIG_LEDS_CLASS
 	u8  led_state;
 	struct led_classdev *led[5];
@@ -81,10 +80,27 @@ struct lg4ff_wheel_data {
 	void (*set_range)(struct hid_device *hid, u16 range);
 };
 
+#define FF_EFFECT_STARTED 0
+#define FF_EFFECT_PLAYING 1
+
+struct lg4ff_effect_state {
+	unsigned long flags;
+	unsigned long start;
+	unsigned long stop;
+	int count;
+};
+
 struct lg4ff_device_entry {
 	spinlock_t report_lock; /* Protect output HID report */
 	struct hid_report *report;
 	struct lg4ff_wheel_data wdata;
+
+	struct hid_device *hid;
+	struct timer_list timer;
+	struct ff_effect *effects;
+	struct lg4ff_effect_state *states;
+	int max_effects;
+    u16 gain;
 };
 
 static const signed short lg4ff_wheel_effects[] = {
@@ -424,7 +440,6 @@ static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const s
 		struct lg4ff_wheel_data t_wdata =  { .product_id = wheel->product_id,
 						     .real_product_id = real_product_id,
 						     .combine = 0,
-						     .gain = 0xffff,
 						     .min_range = wheel->min_range,
 						     .max_range = wheel->max_range,
 						     .set_range = wheel->set_range,
@@ -456,7 +471,7 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 		cmd += 0x0c;
 	}
 
-#define TRANSLATE_FORCE(x) (((((long)x + 0x8000) & 0xffff) * entry->wdata.gain / 0xffff) >> 8)
+#define TRANSLATE_FORCE(x) (((((long)x + 0x8000) & 0xffff) * entry->gain / 0xffff) >> 8)
 
 	switch (effect->type) {
 		case FF_CONSTANT:
@@ -673,13 +688,132 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 	return 0;
 }
 
+static void lg4ff_play_effect(struct lg4ff_device_entry *entry, int effect_id)
+{
+	struct hid_device *hid = entry->hid;
+	unsigned long flags;
+	s32 *rvalue;
+	int cmd;
+
+	rvalue = entry->report->field[0]->value;
+
+	cmd = (0x10 << effect_id) + 0x02;
+
+	spin_lock_irqsave(&entry->report_lock, flags);
+
+	rvalue[0] = cmd;
+	rvalue[1] = 0x00;
+	rvalue[2] = 0x00;
+	rvalue[3] = 0x00;
+	rvalue[4] = 0x00;
+	rvalue[5] = 0x00;
+	rvalue[6] = 0x00;
+
+	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
+	spin_unlock_irqrestore(&entry->report_lock, flags);
+}
+
+static void lg4ff_stop_effect(struct lg4ff_device_entry *entry, int effect_id)
+{
+	struct hid_device *hid = entry->hid;
+	unsigned long flags;
+	s32 *rvalue;
+	int cmd;
+
+	rvalue = entry->report->field[0]->value;
+
+	cmd = (0x10 << effect_id) + 0x03;
+
+	spin_lock_irqsave(&entry->report_lock, flags);
+
+	rvalue[0] = cmd;
+	rvalue[1] = 0x00;
+	rvalue[2] = 0x00;
+	rvalue[3] = 0x00;
+	rvalue[4] = 0x00;
+	rvalue[5] = 0x00;
+	rvalue[6] = 0x00;
+
+	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
+	spin_unlock_irqrestore(&entry->report_lock, flags);
+}
+
+static void lg4ff_update_effects(struct lg4ff_device_entry *entry)
+{
+	struct lg4ff_effect_state *state;
+	struct ff_effect *effect;
+	unsigned long now = jiffies;
+	unsigned long next = 0;
+	int effect_id;
+
+	for (effect_id = 0; effect_id < entry->max_effects; effect_id++) {
+		state = &entry->states[effect_id];
+		if (!test_bit(FF_EFFECT_STARTED, &state->flags)) {
+			continue;
+		}
+
+		effect = &entry->effects[effect_id];
+		if (test_bit(FF_EFFECT_PLAYING, &state->flags)) {
+			if (effect->replay.length) {
+				if (time_before_eq(state->stop, now)) {
+					lg4ff_stop_effect(entry, effect_id);
+					__clear_bit(FF_EFFECT_PLAYING, &state->flags);
+					state->count--;
+					if (state->count > 0) {
+						state->start = now + msecs_to_jiffies(effect->replay.delay);
+						if (effect->replay.length) {
+							state->stop = now + msecs_to_jiffies(effect->replay.length);
+						}
+						next = state->start;
+					} else {
+						__clear_bit(FF_EFFECT_STARTED, &state->flags);
+					}
+				} else if (next == 0 || time_before(state->stop, next)) {
+					next = state->stop;
+				}
+			}
+		}
+		if (test_bit(FF_EFFECT_STARTED, &state->flags) && !test_bit(FF_EFFECT_PLAYING, &state->flags)) {
+			if (time_before_eq(state->start, now)) {
+				lg4ff_play_effect(entry, effect_id);
+				__set_bit(FF_EFFECT_PLAYING, &state->flags);
+				if (effect->replay.length) {
+					next = state->stop;
+				}
+			} else if (next == 0 || time_before(state->start, next)) {
+				next = state->start;
+			}
+		}
+	}
+
+	if (next) {
+		mod_timer(&entry->timer, next);
+	} else {
+		del_timer(&entry->timer);
+	}
+}
+
+static void lg4ff_timer(struct timer_list *t)
+{
+	struct lg4ff_device_entry *entry = from_timer(entry, t, timer);
+	struct hid_input *hidinput = list_entry(entry->hid->inputs.next, struct hid_input, list);
+	struct input_dev *dev = hidinput->input;
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->event_lock, flags);
+
+	lg4ff_update_effects(entry);
+
+	spin_unlock_irqrestore(&dev->event_lock, flags);
+}
+
 static int lg4ff_playback(struct input_dev *dev, int effect_id, int value)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
 	struct lg4ff_device_entry *entry;
-	unsigned long flags;
-	s32 *rvalue;
-	int cmd;
+	struct ff_effect *effect;
+	struct lg4ff_effect_state *state;
+	unsigned long now = jiffies;
 
 	if (effect_id < 0 || effect_id >= 4) {
 		return -EINVAL;
@@ -690,49 +824,35 @@ static int lg4ff_playback(struct input_dev *dev, int effect_id, int value)
 		return -EINVAL;
 	}
 
-	rvalue = entry->report->field[0]->value;
+	effect = &entry->effects[effect_id];
+	state = &entry->states[effect_id];
 
 	if (value > 0) {
 		pr_debug("initiated play\n");
 
-		cmd = (0x10 << effect_id) + 0x02;
+		if (__test_and_clear_bit(FF_EFFECT_PLAYING, &state->flags)) {
+			lg4ff_stop_effect(entry, effect_id);
+		}
 
-		spin_lock_irqsave(&entry->report_lock, flags);
+		__set_bit(FF_EFFECT_STARTED, &state->flags);
 
-		rvalue[0] = cmd;
-		rvalue[1] = 0x00;
-		rvalue[2] = 0x00;
-		rvalue[3] = 0x00;
-		rvalue[4] = 0x00;
-		rvalue[5] = 0x00;
-		rvalue[6] = 0x00;
-
-		hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-		spin_unlock_irqrestore(&entry->report_lock, flags);
+		state->count = value;
+		state->start = now + msecs_to_jiffies(effect->replay.delay);
+		if (effect->replay.length) {
+			state->stop = now + msecs_to_jiffies(effect->replay.length);
+		}
 	} else {
 		pr_debug("initiated stop\n");
 
-		cmd = (0x10 << effect_id) + 0x03;
-
-		spin_lock_irqsave(&entry->report_lock, flags);
-
-		rvalue[0] = cmd;
-		rvalue[1] = 0x00;
-		rvalue[2] = 0x00;
-		rvalue[3] = 0x00;
-		rvalue[4] = 0x00;
-		rvalue[5] = 0x00;
-		rvalue[6] = 0x00;
-
-		hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-		spin_unlock_irqrestore(&entry->report_lock, flags);
+		if (__test_and_clear_bit(FF_EFFECT_PLAYING, &state->flags)) {
+			lg4ff_stop_effect(entry, effect_id);
+		}
+		__clear_bit(FF_EFFECT_STARTED, &state->flags);
 	}
 
-	return 0;
-}
+	lg4ff_update_effects(entry);
 
-static void lg4ff_destroy(struct ff_device *ff)
-{
+	return 0;
 }
 
 /* Sends default autocentering command compatible with
@@ -939,7 +1059,7 @@ static void lg4ff_set_gain(struct input_dev *dev, u16 gain)
 		return;
 	}
 
-    entry->wdata.gain = gain;
+    entry->gain = gain;
 }
 
 static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(const u16 real_product_id, const u16 target_product_id)
@@ -1476,6 +1596,10 @@ static int lg4ff_handle_multimode_wheel(struct hid_device *hid, u16 *real_produc
 	return LG4FF_MMODE_IS_MULTIMODE;
 }
 
+static void lg4ff_destroy(struct ff_device *ff)
+{
+}
+
 int lg4ff_init(struct hid_device *hid)
 {
 	struct hid_input *hidinput = list_entry(hid->inputs.next, struct hid_input, list);
@@ -1613,6 +1737,16 @@ int lg4ff_init(struct hid_device *hid)
 	if (entry->wdata.set_range)
 		entry->wdata.set_range(hid, entry->wdata.range);
 
+	entry->states = kzalloc(dev->ff->max_effects * sizeof(struct lg4ff_effect_state), GFP_KERNEL);
+	if (!entry->states)
+		return -ENOMEM;
+
+	entry->hid = hid;
+	timer_setup(&entry->timer, lg4ff_timer, 0);
+	entry->effects = dev->ff->effects;
+	entry->max_effects = dev->ff->max_effects;
+	entry->gain = 0xffff;
+
 #ifdef CONFIG_LEDS_CLASS
     lg4ff_init_leds(hid, entry, i);
 #endif
@@ -1667,6 +1801,7 @@ int lg4ff_deinit(struct hid_device *hid)
 #endif
 	drv_data->device_props = NULL;
 
+	kfree(entry->states);
 	kfree(entry);
 out:
 	dbg_hid("Device successfully unregistered\n");
