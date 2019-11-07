@@ -114,8 +114,8 @@ static const signed short lg4ff_wheel_effects[] = {
 	FF_SAW_UP,
 	FF_SAW_DOWN,
 	FF_RAMP,
-	FF_FRICTION,
-	//FF_RUMBLE,
+	//FF_FRICTION,
+	FF_RUMBLE,
 	-1
 };
 
@@ -780,6 +780,8 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 						spin_unlock_irqrestore(&entry->report_lock, flags);
 						break;
 					case FF_TRIANGLE:
+					case FF_RUMBLE:
+					case FF_SINE:
 						spin_lock_irqsave(&entry->report_lock, flags);
 						value[0] = cmd;
 						value[1] = 0x06;
@@ -1699,7 +1701,7 @@ int lg4ff_init(struct hid_device *hid)
 
 	error = input_ff_create(dev, 4);
 
-	__clear_bit(FF_RUMBLE, dev->ffbit);
+	//__clear_bit(FF_RUMBLE, dev->ffbit);
 
 	if (error)
 		goto err_init;
