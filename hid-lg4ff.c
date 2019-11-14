@@ -70,6 +70,10 @@ static int timer_msecs = DEFAULT_TIMER_PERIOD;
 module_param(timer_msecs, int, 0660);
 MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs (it will be rounded up to jiffies).");
 
+static int fixed_loop = 0;
+module_param(fixed_loop, int, 0);
+MODULE_PARM_DESC(fixed_loop, "Put the device into fixed loop mode.");
+
 static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range);
 static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
 
@@ -653,6 +657,11 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device 
 	__u8 cmd[8] = {0};
 	int i;
 
+	// Fixed loop mode off
+	cmd[0] = 0x0d;
+	cmd[1] = fixed_loop ? 1 : 0;
+	lg4ff_send_cmd(entry, cmd);
+
 	memset(&entry->states, 0, sizeof(entry->states));
 	memset(&entry->slots, 0, sizeof(entry->slots));
 	memset(&parameters, 0, sizeof(parameters));
@@ -670,10 +679,6 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device 
 		entry->slots[i].cmd_op = 0x0c;
 		entry->slots[i].is_updated = 0;
 	}
-
-	// Fixed loop mode off
-	cmd[0] = 0x0d;
-	lg4ff_send_cmd(entry, cmd);
 
 	entry->effects_playing = 0;
 
