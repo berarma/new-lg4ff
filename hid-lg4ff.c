@@ -9,13 +9,11 @@
  *  Copyright (c) 2019 Bernat Arlandis <berarma@hotmail.com>
  */
 
-/*
- */
-
-
+#include <linux/module.h>
 #include <linux/input.h>
 #include <linux/usb.h>
 #include <linux/hid.h>
+#include <linux/fixp-arith.h>
 
 #include "usbhid/usbhid.h"
 #include "hid-lg.h"
@@ -59,8 +57,50 @@
 #define LG4FF_FFEX_REV_MAJ 0x21
 #define LG4FF_FFEX_REV_MIN 0x00
 
+#define DEBUG(...) pr_debug("lg4ff: " __VA_ARGS__)
+
+#define DEFAULT_TIMER_PERIOD 4
+#define LG4FF_MAX_EFFECTS 16
+
+#define FF_EFFECT_STOPPED 0
+#define FF_EFFECT_STARTING 1
+#define FF_EFFECT_PLAYING 2
+
+static int timer_msecs = DEFAULT_TIMER_PERIOD;
+module_param(timer_msecs, int, 0660);
+MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs (it will be rounded up to jiffies).");
+
 static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range);
 static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
+
+struct lg4ff_effect_state {
+	struct ff_effect effect;
+	unsigned long start_at;
+	unsigned long hold_at;
+	unsigned long play_at;
+	unsigned long fade_at;
+	unsigned long stop_at;
+	int stage;
+	int count;
+};
+
+struct lg4ff_effect_parameters {
+	int level;
+	unsigned int d1;
+	unsigned int d2;
+	int k1;
+	int k2;
+	unsigned int clip;
+};
+
+struct lg4ff_slot {
+	int id;
+	struct lg4ff_effect_parameters parameters;
+	__u8 current_cmd[7];
+	int cmd_op;
+	int is_updated;
+	int effect_type;
+};
 
 struct lg4ff_wheel_data {
 	const u32 product_id;
@@ -80,27 +120,18 @@ struct lg4ff_wheel_data {
 	void (*set_range)(struct hid_device *hid, u16 range);
 };
 
-#define FF_EFFECT_STARTED 0
-#define FF_EFFECT_PLAYING 1
-
-struct lg4ff_effect_state {
-	unsigned long flags;
-	unsigned long start;
-	unsigned long stop;
-	int count;
-};
-
 struct lg4ff_device_entry {
 	spinlock_t report_lock; /* Protect output HID report */
+	spinlock_t timer_lock;
 	struct hid_report *report;
 	struct lg4ff_wheel_data wdata;
 
 	struct hid_device *hid;
 	struct timer_list timer;
-	struct ff_effect *effects;
-	struct lg4ff_effect_state *states;
-	int max_effects;
-    u16 gain;
+	struct lg4ff_slot slots[4];
+	struct lg4ff_effect_state states[LG4FF_MAX_EFFECTS];
+	int effects_playing;
+	u16 gain;
 };
 
 static const signed short lg4ff_wheel_effects[] = {
@@ -109,13 +140,13 @@ static const signed short lg4ff_wheel_effects[] = {
 	FF_DAMPER,
 	FF_AUTOCENTER,
 	FF_PERIODIC,
+	FF_SINE,
 	FF_SQUARE,
 	FF_TRIANGLE,
 	FF_SAW_UP,
 	FF_SAW_DOWN,
 	FF_RAMP,
-	//FF_FRICTION,
-	FF_RUMBLE,
+	FF_FRICTION,
 	-1
 };
 
@@ -321,6 +352,401 @@ static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 	return entry;
 }
 
+void lg4ff_send_cmd(struct lg4ff_device_entry *entry, __u8 *cmd)
+{
+	unsigned long flags;
+	s32 *value = entry->report->field[0]->value;
+
+	spin_lock_irqsave(&entry->report_lock, flags);
+	value[0] = cmd[0];
+	value[1] = cmd[1];
+	value[2] = cmd[2];
+	value[3] = cmd[3];
+	value[4] = cmd[4];
+	value[5] = cmd[5];
+	value[6] = cmd[6];
+	hid_hw_request(entry->hid, entry->report, HID_REQ_SET_REPORT);
+	spin_unlock_irqrestore(&entry->report_lock, flags);
+	DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
+}
+
+#define CLAMP_VALUE_U16(x) ((unsigned short)(x > 0xffff ? 0xffff : x))
+#define CLAMP_VALUE_S16(x) ((unsigned short)(x < -0x8000 ? -0x8000 : (x > 0x7fff ? 0x7fff : x)))
+#define SCALE_VALUE_U16(x, bits) (CLAMP_VALUE_U16(x) >> (16 - bits))
+#define TRANSLATE_FORCE(x) ((CLAMP_VALUE_S16(x) + 0x8000) >> 8)
+
+void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
+{
+	__u8 original_cmd[7];
+	int d1;
+	int d2;
+	int s1;
+	int s2;
+
+	memcpy(original_cmd, slot->current_cmd, sizeof(original_cmd));
+
+	slot->current_cmd[0] = (0x10 << slot->id) + slot->cmd_op;
+	switch (slot->effect_type) {
+		case FF_CONSTANT:
+			slot->current_cmd[1] = 0x00;
+			slot->current_cmd[2 + slot->id] = TRANSLATE_FORCE(parameters->level);
+			slot->current_cmd[3] = 0;
+			slot->current_cmd[4] = 0;
+			slot->current_cmd[5] = 0;
+			slot->current_cmd[6] = 0;
+			break;
+		case FF_SPRING:
+			d1 = SCALE_VALUE_U16(((parameters->d1 + 0x8000) & 0xffff), 11);
+			d2 = SCALE_VALUE_U16(((parameters->d2 + 0x8000) & 0xffff), 11);
+			s1 = parameters->k1 < 0;
+			s2 = parameters->k2 < 0;
+			slot->current_cmd[1] = 0x0b;
+			slot->current_cmd[2] = d1 >> 3;
+			slot->current_cmd[3] = d2 >> 3;
+			slot->current_cmd[4] = (SCALE_VALUE_U16(abs(parameters->k2), 4) << 4) + SCALE_VALUE_U16(abs(parameters->k1), 4);
+			slot->current_cmd[5] = ((d2 & 7) << 5) + ((d1 & 7) << 1) + (s2 << 4) + s1;
+			slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
+			break;
+		case FF_DAMPER:
+			s1 = parameters->k1 < 0;
+			s2 = parameters->k2 < 0;
+			slot->current_cmd[1] = 0x0c;
+			slot->current_cmd[2] = SCALE_VALUE_U16(abs(parameters->k1), 4);
+			slot->current_cmd[3] = s1;
+			slot->current_cmd[4] = SCALE_VALUE_U16(abs(parameters->k2), 4);
+			slot->current_cmd[5] = s2;
+			slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
+			break;
+		case FF_FRICTION:
+			s1 = parameters->k1 < 0;
+			s2 = parameters->k2 < 0;
+			slot->current_cmd[1] = 0x0e;
+			slot->current_cmd[2] = SCALE_VALUE_U16(abs(parameters->k1), 8);
+			slot->current_cmd[3] = SCALE_VALUE_U16(abs(parameters->k2), 8);
+			slot->current_cmd[4] = SCALE_VALUE_U16(parameters->clip, 8);
+			slot->current_cmd[5] = (s2 << 4) + s1;
+			slot->current_cmd[6] = 0;
+			break;
+	}
+	
+	if (memcmp(original_cmd, slot->current_cmd, sizeof(original_cmd))) {
+		slot->is_updated = 1;
+	}
+}
+
+static inline int lg4ff_calculate_constant(struct lg4ff_effect_state *state,
+		unsigned long t)
+{
+	int degrees = state->effect.direction * 360 / 0xffff;
+
+	return fixp_sin16(degrees) * state->effect.u.constant.level / 0x7fff;
+}
+
+static inline int lg4ff_calculate_ramp(struct lg4ff_effect_state *state,
+		unsigned long t)
+{
+	struct ff_ramp_effect *ramp = &state->effect.u.ramp;
+	int degrees = state->effect.direction * 360 / 0xffff;
+	int slope;
+	int level;
+
+	if (state->effect.replay.length) {
+		slope = (abs(ramp->end_level - ramp->start_level) << 16) / state->effect.replay.length;
+		if (ramp->end_level > ramp->start_level) {
+			level = (ramp->start_level + (t * slope)) >> 16;
+		} else {
+			level = (ramp->start_level - (t * slope)) >> 16;
+		}
+	} else {
+		level = ramp->start_level;
+	}
+
+	return fixp_sin16(degrees) * level / 0x7fff;
+}
+
+static inline int lg4ff_calculate_periodic(struct lg4ff_effect_state *state,
+		unsigned long t)
+{
+	struct ff_periodic_effect *periodic = &state->effect.u.periodic;
+	int degrees = state->effect.direction * 360 / 0xffff;
+	int phase = ((t + periodic->phase) % periodic->period) * 360 / periodic->period;
+	int level = periodic->offset;
+
+	switch (periodic->waveform) {
+		case FF_SINE:
+			level += fixp_sin16(phase) * periodic->magnitude / 0x7fff;
+			break;
+		case FF_SQUARE:
+			level += (phase < 180 ? 1 : -1) * periodic->magnitude;
+			break;
+		case FF_TRIANGLE:
+			level += abs(phase * periodic->magnitude * 2 / 360 - periodic->magnitude) * 2 - periodic->magnitude;
+			break;
+		case FF_SAW_UP:
+			level += phase * periodic->magnitude * 2 / 360 - periodic->magnitude;
+			break;
+		case FF_SAW_DOWN:
+			level += periodic->magnitude - phase * periodic->magnitude * 2 / 360;
+			break;
+	}
+
+	DEBUG("level: %d", level);
+
+	return fixp_sin16(degrees) * level / 0x7fff;
+}
+
+static inline void lg4ff_calculate_spring(struct lg4ff_effect_parameters
+		*parameters, struct lg4ff_effect_state *state)
+{
+	struct ff_condition_effect *condition = &state->effect.u.condition[0];
+	int d1;
+	int d2;
+
+	d1 = condition->center - condition->deadband / 2;
+	d2 = condition->center + condition->deadband / 2;
+	if (d1 < parameters->d1) {
+		parameters->d1 = d1;
+	}
+	if (d2 > parameters->d2) {
+		parameters->d2 = d2;
+	}
+	parameters->k1 = condition->left_coeff;
+	parameters->k2 = condition->right_coeff;
+	parameters->clip = condition->left_saturation;
+}
+
+static inline void lg4ff_calculate_damper(struct lg4ff_effect_parameters
+		*parameters, struct lg4ff_effect_state *state)
+{
+	struct ff_condition_effect *condition = &state->effect.u.condition[0];
+
+	parameters->k1 = condition->left_coeff;
+	parameters->k2 = condition->right_coeff;
+	parameters->clip = condition->left_saturation;
+}
+
+static inline void lg4ff_calculate_friction(struct lg4ff_effect_parameters
+		*parameters, struct lg4ff_effect_state *state)
+{
+	struct ff_condition_effect *condition = &state->effect.u.condition[0];
+
+	parameters->k1 = condition->left_coeff;
+	parameters->k2 = condition->right_coeff;
+	parameters->clip = condition->left_saturation;
+}
+
+static void lg4ff_timer(struct timer_list *t)
+{
+	struct lg4ff_device_entry *entry = from_timer(entry, t, timer);
+	struct lg4ff_slot *slot;
+	struct lg4ff_effect_state *state;
+	struct ff_effect *effect;
+	struct lg4ff_effect_parameters parameters[4];
+	struct timespec t0, t1;
+	unsigned long handler_time;
+	unsigned long playing_time;
+	unsigned long now = jiffies_to_msecs(jiffies);
+	unsigned long flags;
+	int count = entry->effects_playing;
+	int effect_id;
+	int i;
+
+	spin_lock_irqsave(&entry->timer_lock, flags);
+
+	getrawmonotonic(&t0);
+
+	memset(parameters, 0, sizeof(parameters));
+
+	for (effect_id = 0; effect_id < LG4FF_MAX_EFFECTS; effect_id++) {
+		if (!count) {
+			break;
+		}
+
+		state = &entry->states[effect_id];
+		if (state->stage == FF_EFFECT_STOPPED) {
+			continue;
+		}
+
+		count--;
+
+		effect = &state->effect;
+
+		if (state->stage != FF_EFFECT_STARTING && state->stop_at != 0 &&
+				now > state->stop_at) {
+			state->count--;
+			if (state->count) {
+				state->stage = FF_EFFECT_STARTING;
+				state->start_at = state->stop_at;
+			} else {
+				state->stage = FF_EFFECT_STOPPED;
+				entry->effects_playing--;
+				continue;
+			}
+		}
+
+		if (state->stage == FF_EFFECT_STARTING) {
+			state->stage = FF_EFFECT_PLAYING;
+			state->play_at = state->start_at + effect->replay.delay;
+			if (effect->replay.length) {
+				state->stop_at = state->play_at + effect->replay.length;
+			} else {
+				state->stop_at = 0;
+			}
+			//state->hold_at = state->play_at + effect->envelope.attack_length;
+			//state->fade_at = state->stop_at - effect->envelope.fade_length;
+		}
+
+		if (now < state->play_at) {
+			continue;
+		}
+
+		playing_time = now - state->start_at;
+		switch (effect->type) {
+			case FF_CONSTANT:
+				parameters[0].level += lg4ff_calculate_constant(state, playing_time);
+				break;
+			case FF_RAMP:
+				parameters[0].level += lg4ff_calculate_ramp(state, playing_time);
+				break;
+			case FF_PERIODIC:
+				parameters[0].level += lg4ff_calculate_periodic(state, playing_time);
+				break;
+			case FF_SPRING:
+				lg4ff_calculate_spring(&parameters[1], state);
+				break;
+			case FF_DAMPER:
+				lg4ff_calculate_damper(&parameters[2], state);
+				break;
+			case FF_FRICTION:
+				lg4ff_calculate_friction(&parameters[3], state);
+				break;
+		}
+	}
+
+	parameters->level *= entry->gain / 0xffff;
+
+	spin_unlock_irqrestore(&entry->timer_lock, flags);
+
+	for (i = 0; i < 4; i++) {
+		slot = &entry->slots[i];
+		lg4ff_update_slot(slot, &parameters[i]);
+		if (slot->is_updated) {
+			if (slot->is_updated) {
+				lg4ff_send_cmd(entry, slot->current_cmd);
+			}
+			slot->is_updated = 0;
+		}
+	}
+
+	getrawmonotonic(&t1);
+	handler_time = (t1.tv_nsec > t0.tv_nsec ? 0 : 1000000000) + t1.tv_nsec - t0.tv_nsec;
+	if (handler_time > timer_msecs * 1000000 / 2) {
+		DEBUG("Timer function slow: %lu", handler_time);
+	}
+
+	mod_timer(&entry->timer, msecs_to_jiffies(now + timer_msecs));
+}
+
+static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device *ff)
+{
+	struct lg4ff_effect_parameters parameters;
+	__u8 cmd[8] = {0};
+	int i;
+
+	memset(&entry->states, 0, sizeof(entry->states));
+	memset(&entry->slots, 0, sizeof(entry->slots));
+	memset(&parameters, 0, sizeof(parameters));
+
+	entry->slots[0].effect_type = FF_CONSTANT;
+	entry->slots[1].effect_type = FF_SPRING;
+	entry->slots[2].effect_type = FF_DAMPER;
+	entry->slots[3].effect_type = FF_FRICTION;
+
+	for (i = 0; i < 4; i++) {
+		entry->slots[i].id = i;
+		entry->slots[i].cmd_op = 0x01;
+		lg4ff_update_slot(&entry->slots[i], &parameters);
+		lg4ff_send_cmd(entry, entry->slots[i].current_cmd);
+		entry->slots[i].cmd_op = 0x0c;
+		entry->slots[i].is_updated = 0;
+	}
+
+	// Fixed loop mode off
+	cmd[0] = 0x0d;
+	lg4ff_send_cmd(entry, cmd);
+
+	entry->effects_playing = 0;
+
+	spin_lock_init(&entry->timer_lock);
+
+	timer_setup(&entry->timer, lg4ff_timer, 0);
+	mod_timer(&entry->timer, jiffies + msecs_to_jiffies(timer_msecs));
+}
+
+static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, struct ff_effect *old)
+{
+	struct hid_device *hid = input_get_drvdata(dev);
+	struct lg4ff_device_entry *entry;
+	struct lg4ff_effect_state *state;
+	//unsigned long now = jiffies;
+	unsigned long flags;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	state = &entry->states[effect->id];
+
+	spin_lock_irqsave(&entry->timer_lock, flags);
+
+	//if (state->stage != FF_EFFECT_STOPPED) {
+	//	state->start_at = now;
+	//	state->stage = FF_EFFECT_STARTING;
+	//}
+	state->effect = *effect;
+
+	spin_unlock_irqrestore(&entry->timer_lock, flags);
+
+	return 0;
+}
+
+static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
+{
+	struct hid_device *hid = input_get_drvdata(dev);
+	struct lg4ff_device_entry *entry;
+	struct lg4ff_effect_state *state;
+	unsigned long now = jiffies_to_msecs(jiffies);
+	unsigned long flags;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	state = &entry->states[effect_id];
+
+	spin_lock_irqsave(&entry->timer_lock, flags);
+
+	if (value > 0) {
+		if (state->stage == FF_EFFECT_STOPPED) {
+			entry->effects_playing++;
+		}
+		state->stage = FF_EFFECT_STARTING;
+		state->start_at = now;
+		state->count = value;
+	} else {
+		if (state->stage != FF_EFFECT_STOPPED) {
+			state->stage = FF_EFFECT_STOPPED;
+			entry->effects_playing--;
+		}
+	}
+
+	spin_unlock_irqrestore(&entry->timer_lock, flags);
+
+	return 0;
+}
+
 /* Recalculates X axis value accordingly to currently selected range */
 static s32 lg4ff_adjust_dfp_x_axis(s32 value, u16 range)
 {
@@ -449,429 +875,6 @@ static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const s
 
 		memcpy(wdata, &t_wdata, sizeof(t_wdata));
 	}
-}
-
-static void lg4ff_play_effect(struct lg4ff_device_entry *entry, int effect_id)
-{
-	struct hid_device *hid = entry->hid;
-	unsigned long flags;
-	s32 *rvalue;
-	int cmd;
-
-	rvalue = entry->report->field[0]->value;
-
-	cmd = (0x10 << effect_id) + 0x02;
-
-	spin_lock_irqsave(&entry->report_lock, flags);
-
-	rvalue[0] = cmd;
-	rvalue[1] = 0x00;
-	rvalue[2] = 0x00;
-	rvalue[3] = 0x00;
-	rvalue[4] = 0x00;
-	rvalue[5] = 0x00;
-	rvalue[6] = 0x00;
-
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-	spin_unlock_irqrestore(&entry->report_lock, flags);
-}
-
-static void lg4ff_stop_effect(struct lg4ff_device_entry *entry, int effect_id)
-{
-	struct hid_device *hid = entry->hid;
-	unsigned long flags;
-	s32 *rvalue;
-	int cmd;
-
-	rvalue = entry->report->field[0]->value;
-
-	cmd = (0x10 << effect_id) + 0x03;
-
-	spin_lock_irqsave(&entry->report_lock, flags);
-
-	rvalue[0] = cmd;
-	rvalue[1] = 0x00;
-	rvalue[2] = 0x00;
-	rvalue[3] = 0x00;
-	rvalue[4] = 0x00;
-	rvalue[5] = 0x00;
-	rvalue[6] = 0x00;
-
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-	spin_unlock_irqrestore(&entry->report_lock, flags);
-}
-
-static void lg4ff_setup_effect(struct lg4ff_effect_state *state, struct ff_effect *effect, int count)
-{
-	unsigned long now = jiffies;
-
-	state->count = count;
-	state->start = now + msecs_to_jiffies(effect->replay.delay);
-	if (effect->replay.length) {
-		state->stop = now + msecs_to_jiffies(effect->replay.length);
-	}
-
-	__set_bit(FF_EFFECT_STARTED, &state->flags);
-}
-
-static void lg4ff_update_effects(struct lg4ff_device_entry *entry)
-{
-	struct lg4ff_effect_state *state;
-	struct ff_effect *effect;
-	unsigned long now = jiffies;
-	unsigned long next = 0;
-	int effect_id;
-
-	for (effect_id = 0; effect_id < entry->max_effects; effect_id++) {
-		state = &entry->states[effect_id];
-		if (!test_bit(FF_EFFECT_STARTED, &state->flags)) {
-			continue;
-		}
-
-		effect = &entry->effects[effect_id];
-		if (test_bit(FF_EFFECT_PLAYING, &state->flags)) {
-			if (effect->replay.length) {
-				if (time_before_eq(state->stop, now)) {
-					state->count--;
-					if (state->count > 0) {
-						lg4ff_setup_effect(state, effect, state->count);
-					} else {
-						__clear_bit(FF_EFFECT_STARTED, &state->flags);
-					}
-					__clear_bit(FF_EFFECT_PLAYING, &state->flags);
-					lg4ff_stop_effect(entry, effect_id);
-				} else if (next == 0 || time_before(state->stop, next)) {
-					next = state->stop;
-				}
-			}
-		}
-		if (test_bit(FF_EFFECT_STARTED, &state->flags) && !test_bit(FF_EFFECT_PLAYING, &state->flags)) {
-			if (time_before_eq(state->start, now)) {
-				__set_bit(FF_EFFECT_PLAYING, &state->flags);
-				lg4ff_play_effect(entry, effect_id);
-				if (effect->replay.length) {
-					next = state->stop;
-				}
-			} else if (next == 0 || time_before(state->start, next)) {
-				next = state->start;
-			}
-		}
-	}
-
-	if (next) {
-		mod_timer(&entry->timer, next);
-	} else {
-		del_timer(&entry->timer);
-	}
-}
-
-static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, struct ff_effect *old)
-{
-	struct hid_device *hid = input_get_drvdata(dev);
-	struct lg4ff_device_entry *entry;
-    struct lg4ff_effect_state *state;
-	unsigned long flags;
-	s32 *value;
-	int cmd;
-
-	entry = lg4ff_get_device_entry(hid);
-	if (entry == NULL) {
-		return -EINVAL;
-	}
-
-	state = &entry->states[effect->id];
-
-	value = entry->report->field[0]->value;
-
-	cmd = 0x10 << effect->id;
-
-	if (test_bit(FF_EFFECT_PLAYING, &state->flags) && effect->replay.delay == 0 && old != NULL && effect->type == old->type && (effect->type != FF_PERIODIC || effect->u.periodic.waveform == old->u.periodic.waveform)) {
-		cmd += 0x0c;
-	}
-
-	if (test_bit(FF_EFFECT_PLAYING, &state->flags) && effect->replay.delay > 0) {
-		__clear_bit(FF_EFFECT_PLAYING, &state->flags);
-		lg4ff_stop_effect(entry, effect->id);
-	}
-
-#define TRANSLATE_FORCE(x) (((((long)x + 0x8000) & 0xffff) * entry->gain / 0xffff) >> 8)
-
-	switch (effect->type) {
-		case FF_CONSTANT:
-			{
-				int level;
-				if (effect->direction < 0x8000) {
-					level = TRANSLATE_FORCE(effect->u.constant.level);
-				} else {
-					level = TRANSLATE_FORCE(-effect->u.constant.level);
-				}
-
-				spin_lock_irqsave(&entry->report_lock, flags);
-				value[0] = cmd;
-				value[1] = 0x00;
-				value[2] = level;
-				value[3] = level;
-				value[4] = level;
-				value[5] = level;
-				value[6] = 0x00;
-				hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-				spin_unlock_irqrestore(&entry->report_lock, flags);
-			}
-			break;
-		case FF_SPRING:
-			{
-				struct ff_condition_effect condition = effect->u.condition[0];
-
-				spin_lock_irqsave(&entry->report_lock, flags);
-				value[0] = cmd;
-				value[1] = 0x01;
-				value[2] = ((condition.center - condition.deadband + 0x8000) & 0xffff) >> 8;
-				value[3] = ((condition.center + condition.deadband + 0x8000) & 0xffff) >> 8;
-				value[4] = ((condition.left_coeff >> 12) & 0x07) + ((condition.right_coeff >> 8) & 0x70);
-				value[5] = ((condition.left_coeff >> 15) & 0x01) + ((condition.right_coeff >> 11) & 0x10);
-				value[6] = max(condition.left_saturation, condition.right_saturation) >> 8;
-				hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-				spin_unlock_irqrestore(&entry->report_lock, flags);
-			}
-			break;
-		case FF_DAMPER:
-			{
-				struct ff_condition_effect condition = effect->u.condition[0];
-
-				spin_lock_irqsave(&entry->report_lock, flags);
-				value[0] = cmd;
-				value[1] = 0x02;
-				value[2] = ((condition.left_coeff >> 12) & 0x07);
-				value[3] = ((condition.left_coeff >> 15) & 0x01);
-				value[4] = ((condition.right_coeff >> 12) & 0x07);
-				value[5] = ((condition.right_coeff >> 15) & 0x01);
-				value[6] = 0x00;
-				hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-				spin_unlock_irqrestore(&entry->report_lock, flags);
-			}
-			break;
-		case FF_RAMP:
-			{
-				struct ff_ramp_effect ramp = effect->u.ramp;
-				int start_level = TRANSLATE_FORCE(ramp.start_level);
-				int end_level = TRANSLATE_FORCE(ramp.end_level);
-				int direction = 0;
-				int slope_x = effect->replay.length / 2;
-				int slope_y = start_level - end_level;
-				int delta_x;
-				int delta_y;
-				int tmp;
-
-				if (start_level < end_level) {
-					tmp = start_level;
-					start_level = end_level;
-					end_level = tmp;
-					direction = 1;
-					slope_y = -slope_y;
-				}
-
-				if (slope_x > slope_y) {
-					if (slope_y == 0) {
-						slope_y = 1;
-					}
-					delta_x = min(15, slope_x / slope_y);
-					delta_y = 1;
-				} else {
-					if (slope_x == 0) {
-						slope_x = 1;
-					}
-					delta_x = 1;
-					delta_y = min(15, slope_y / slope_x);
-				}
-
-				spin_lock_irqsave(&entry->report_lock, flags);
-				value[0] = cmd;
-				value[1] = 0x09;
-				value[2] = TRANSLATE_FORCE(effect->u.ramp.start_level);
-				value[3] = TRANSLATE_FORCE(effect->u.ramp.end_level);
-				value[4] = direction;
-				value[5] = (delta_x << 4) + delta_y;
-				value[6] = 0x00;
-				hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-				spin_unlock_irqrestore(&entry->report_lock, flags);
-			}
-			break;
-		case FF_FRICTION:
-			{
-				struct ff_condition_effect condition = effect->u.condition[0];
-
-				spin_lock_irqsave(&entry->report_lock, flags);
-
-				value[0] = cmd;
-				value[1] = 0x0e;
-				value[2] = (condition.left_coeff >> 8) & 0xff;
-				value[3] = (condition.right_coeff >> 8) & 0xff;
-				value[4] = max(condition.left_saturation, condition.right_saturation) >> 8;
-				value[5] = ((condition.left_coeff >> 15) & 0x01) + ((condition.right_coeff >> 11) & 0x10);
-				value[6] = 0x00;
-
-				hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-				spin_unlock_irqrestore(&entry->report_lock, flags);
-			}
-			break;
-		case FF_PERIODIC:
-			{
-				struct ff_periodic_effect periodic = effect->u.periodic;
-				int max_level = TRANSLATE_FORCE(periodic.magnitude);
-				int min_level = TRANSLATE_FORCE(2 * periodic.offset - periodic.magnitude);
-				int slope_x;
-				int slope_y;
-				int delta_x;
-				int delta_y;
-				int initial_level;
-				int tmp;
-
-				if (max_level < min_level) {
-					tmp = max_level;
-					max_level = min_level;
-					min_level = tmp;
-				}
-
-				slope_x = periodic.period / 2;
-				if (periodic.waveform == FF_TRIANGLE) {
-					slope_x /= 2;
-				}
-				slope_y = max_level - min_level;
-
-				if (slope_x > slope_y) {
-					if (slope_y == 0) {
-						slope_y = 1;
-					}
-					delta_x = min(15, slope_x / slope_y);
-					delta_y = 1;
-				} else {
-					if (slope_x == 0) {
-						slope_x = 1;
-					}
-					delta_x = 1;
-					delta_y = min(15, slope_y / slope_x);
-				}
-
-				switch (periodic.waveform) {
-					case FF_SAW_UP:
-						initial_level = min_level + periodic.phase / 2 / delta_x * delta_y;
-						spin_lock_irqsave(&entry->report_lock, flags);
-						value[0] = cmd;
-						value[1] = 0x04;
-						value[2] = max_level;
-						value[3] = min_level;
-						value[4] = initial_level;
-						value[5] = 0x00;
-						value[6] = (delta_x << 4) + delta_y;
-						hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-						spin_unlock_irqrestore(&entry->report_lock, flags);
-						break;
-					case FF_SAW_DOWN:
-						initial_level = max_level - periodic.phase / 2 / delta_x * delta_y;
-						spin_lock_irqsave(&entry->report_lock, flags);
-						value[0] = cmd;
-						value[1] = 0x05;
-						value[2] = max_level;
-						value[3] = min_level;
-						value[4] = initial_level;
-						value[5] = 0x00;
-						value[6] = (delta_x << 4) + delta_y;
-						hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-						spin_unlock_irqrestore(&entry->report_lock, flags);
-						break;
-					case FF_TRIANGLE:
-					case FF_RUMBLE:
-					case FF_SINE:
-						spin_lock_irqsave(&entry->report_lock, flags);
-						value[0] = cmd;
-						value[1] = 0x06;
-						value[2] = max_level;
-						value[3] = min_level;
-						value[4] = 0x00;
-						value[5] = 0x00;
-						value[6] = (delta_x << 4) + delta_y;
-						hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-						spin_unlock_irqrestore(&entry->report_lock, flags);
-						break;
-					case FF_SQUARE:
-						spin_lock_irqsave(&entry->report_lock, flags);
-						value[0] = cmd;
-						value[1] = 0x07;
-						value[2] = max_level;
-						value[3] = min_level;
-						value[4] = periodic.period / 4;
-						value[5] = periodic.period / 4;
-						value[6] = periodic.phase / 2;
-						hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-						spin_unlock_irqrestore(&entry->report_lock, flags);
-						break;
-				}
-				break;
-			}
-			break;
-	}
-
-	if (test_bit(FF_EFFECT_STARTED, &state->flags)) {
-		lg4ff_setup_effect(state, effect, state->count);
-		lg4ff_update_effects(entry);
-	}
-
-	return 0;
-}
-
-static void lg4ff_timer(struct timer_list *t)
-{
-	struct lg4ff_device_entry *entry = from_timer(entry, t, timer);
-	struct hid_input *hidinput = list_entry(entry->hid->inputs.next, struct hid_input, list);
-	struct input_dev *dev = hidinput->input;
-	unsigned long flags;
-
-	spin_lock_irqsave(&dev->event_lock, flags);
-
-	lg4ff_update_effects(entry);
-
-	spin_unlock_irqrestore(&dev->event_lock, flags);
-}
-
-static int lg4ff_playback(struct input_dev *dev, int effect_id, int value)
-{
-	struct hid_device *hid = input_get_drvdata(dev);
-	struct lg4ff_device_entry *entry;
-	struct ff_effect *effect;
-	struct lg4ff_effect_state *state;
-
-	if (effect_id < 0 || effect_id >= 4) {
-		return -EINVAL;
-	}
-
-	entry = lg4ff_get_device_entry(hid);
-	if (entry == NULL) {
-		return -EINVAL;
-	}
-
-	effect = &entry->effects[effect_id];
-	state = &entry->states[effect_id];
-
-	if (value > 0) {
-		pr_debug("initiated play\n");
-
-		if (__test_and_clear_bit(FF_EFFECT_PLAYING, &state->flags)) {
-			lg4ff_stop_effect(entry, effect_id);
-		}
-
-		lg4ff_setup_effect(state, effect, value);
-	} else {
-		pr_debug("initiated stop\n");
-
-		__clear_bit(FF_EFFECT_STARTED, &state->flags);
-		if (__test_and_clear_bit(FF_EFFECT_PLAYING, &state->flags)) {
-			lg4ff_stop_effect(entry, effect_id);
-		}
-	}
-
-	lg4ff_update_effects(entry);
-
-	return 0;
 }
 
 /* Sends default autocentering command compatible with
@@ -1072,13 +1075,18 @@ static void lg4ff_set_gain(struct input_dev *dev, u16 gain)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
 	struct lg4ff_device_entry *entry;
+	unsigned long flags;
 
 	entry = lg4ff_get_device_entry(hid);
 	if (entry == NULL) {
 		return;
 	}
 
-    entry->gain = gain;
+	spin_lock_irqsave(&entry->timer_lock, flags);
+
+	entry->gain = gain;
+
+	spin_unlock_irqrestore(&entry->timer_lock, flags);
 }
 
 static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(const u16 real_product_id, const u16 target_product_id)
@@ -1699,7 +1707,7 @@ int lg4ff_init(struct hid_device *hid)
 	for (j = 0; lg4ff_devices[i].ff_effects[j] >= 0; j++)
 		set_bit(lg4ff_devices[i].ff_effects[j], dev->ffbit);
 
-	error = input_ff_create(dev, 4);
+	error = input_ff_create(dev, LG4FF_MAX_EFFECTS);
 
 	//__clear_bit(FF_RUMBLE, dev->ffbit);
 
@@ -1708,7 +1716,7 @@ int lg4ff_init(struct hid_device *hid)
 
 	ff = dev->ff;
 	ff->upload = lg4ff_upload_effect;
-	ff->playback = lg4ff_playback;
+	ff->playback = lg4ff_play_effect;
 	ff->set_gain = lg4ff_set_gain;
 	ff->destroy = lg4ff_destroy;
 
@@ -1756,21 +1764,19 @@ int lg4ff_init(struct hid_device *hid)
 	if (entry->wdata.set_range)
 		entry->wdata.set_range(hid, entry->wdata.range);
 
-	entry->states = kzalloc(dev->ff->max_effects * sizeof(struct lg4ff_effect_state), GFP_KERNEL);
-	if (!entry->states)
-		return -ENOMEM;
-
 	entry->hid = hid;
-	timer_setup(&entry->timer, lg4ff_timer, 0);
-	entry->effects = dev->ff->effects;
-	entry->max_effects = dev->ff->max_effects;
 	entry->gain = 0xffff;
 
+	lg4ff_init_slots(entry, dev->ff);
+
 #ifdef CONFIG_LEDS_CLASS
-    lg4ff_init_leds(hid, entry, i);
+	lg4ff_init_leds(hid, entry, i);
 #endif
 
 	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (new)\n");
+
+	DEBUG("HZ (jiffies) = %d", HZ);
+
 	return 0;
 
 err_init:
@@ -1792,6 +1798,8 @@ int lg4ff_deinit(struct hid_device *hid)
 	entry = drv_data->device_props;
 	if (!entry)
 		goto out; /* Nothing more to do */
+
+	del_timer(&entry->timer);
 
 	/* Multimode devices will have at least the "MODE_NATIVE" bit set */
 	if (entry->wdata.alternate_modes) {
@@ -1820,7 +1828,6 @@ int lg4ff_deinit(struct hid_device *hid)
 #endif
 	drv_data->device_props = NULL;
 
-	kfree(entry->states);
 	kfree(entry);
 out:
 	dbg_hid("Device successfully unregistered\n");
