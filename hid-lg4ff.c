@@ -494,8 +494,6 @@ static inline int lg4ff_calculate_periodic(struct lg4ff_effect_state *state,
 			break;
 	}
 
-	DEBUG("level: %d", level);
-
 	return fixp_sin16(degrees) * level / 0x7fff;
 }
 
