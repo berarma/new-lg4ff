@@ -58,12 +58,21 @@
 #define LG4FF_FFEX_REV_MIN 0x00
 
 #define DEBUG(...) pr_debug("lg4ff: " __VA_ARGS__)
+#define time_diff(a,b) ({ \
+		typecheck(unsigned long, a); \
+		typecheck(unsigned long, b); \
+		((a) - (long)(b)); })
+#define CLAMP_VALUE_U16(x) ((unsigned short)((x) > 0xffff ? 0xffff : (x)))
+#define CLAMP_VALUE_S16(x) ((unsigned short)((x) <= -0x8000 ? -0x8000 : ((x) > 0x7fff ? 0x7fff : (x))))
+#define SCALE_VALUE_U16(x, bits) (CLAMP_VALUE_U16(x) >> (16 - bits))
+#define TRANSLATE_FORCE(x) ((CLAMP_VALUE_S16(x) + 0x8000) >> 8)
+#define STOP_EFFECT(state) ((state)->flags = 0)
 
 #define DEFAULT_TIMER_PERIOD 4
-#define LG4FF_MAX_EFFECTS 32
+#define LG4FF_MAX_EFFECTS 16
 
-#define FF_EFFECT_STOPPED 0
-#define FF_EFFECT_STARTING 1
+#define FF_EFFECT_STARTED 0
+#define FF_EFFECT_ALLSET 1
 #define FF_EFFECT_PLAYING 2
 #define FF_EFFECT_UPDATING 3
 
@@ -80,15 +89,21 @@ static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
 
 struct lg4ff_effect_state {
 	struct ff_effect effect;
+	struct ff_envelope *envelope;
 	unsigned long start_at;
-	unsigned long hold_at;
 	unsigned long play_at;
-	unsigned long fade_at;
 	unsigned long stop_at;
-	unsigned int current_period;
-	int current_phase;
-	int stage;
-	int count;
+	unsigned long flags;
+	unsigned long time_playing;
+	unsigned long updated_at;
+	unsigned int phase;
+	unsigned int phase_adj;
+	unsigned int count;
+	unsigned int cmd;
+	unsigned int cmd_start_time;
+	unsigned int cmd_start_count;
+	int direction_gain;
+	int slope;
 };
 
 struct lg4ff_effect_parameters {
@@ -137,7 +152,7 @@ struct lg4ff_device_entry {
 	struct timer_list timer;
 	struct lg4ff_slot slots[4];
 	struct lg4ff_effect_state states[LG4FF_MAX_EFFECTS];
-	int effects_playing;
+	int effects_used;
 	u16 gain;
 };
 
@@ -377,11 +392,6 @@ void lg4ff_send_cmd(struct lg4ff_device_entry *entry, __u8 *cmd)
 	//DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
-#define CLAMP_VALUE_U16(x) ((unsigned short)(x > 0xffff ? 0xffff : x))
-#define CLAMP_VALUE_S16(x) ((unsigned short)(x < -0x8000 ? -0x8000 : (x > 0x7fff ? 0x7fff : x)))
-#define SCALE_VALUE_U16(x, bits) (CLAMP_VALUE_U16(x) >> (16 - bits))
-#define TRANSLATE_FORCE(x) ((CLAMP_VALUE_S16(x) + 0x8000) >> 8)
-
 void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
 {
 	__u8 original_cmd[7];
@@ -441,67 +451,96 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 	}
 }
 
-static inline int lg4ff_calculate_constant(struct lg4ff_effect_state *state,
-		unsigned long t)
+static __always_inline int lg4ff_calculate_constant(struct lg4ff_effect_state *state)
 {
-	int degrees = state->effect.direction * 360 / 0xffff;
+	int level = state->effect.u.constant.level;
+	int level_sign;
+	long d, t;
 
-	return fixp_sin16(degrees) * state->effect.u.constant.level / 0x7fff;
-}
-
-static inline int lg4ff_calculate_ramp(struct lg4ff_effect_state *state,
-		unsigned long t)
-{
-	struct ff_ramp_effect *ramp = &state->effect.u.ramp;
-	int degrees = state->effect.direction * 360 / 0xffff;
-	int slope;
-	int level;
-
-	if (state->effect.replay.length) {
-		slope = (abs(ramp->end_level - ramp->start_level) << 16) / state->effect.replay.length;
-		if (ramp->end_level > ramp->start_level) {
-			level = (ramp->start_level + (t * slope)) >> 16;
-		} else {
-			level = (ramp->start_level - (t * slope)) >> 16;
+	if (state->time_playing < state->envelope->attack_length) {
+		level_sign = level < 0 ? -1 : 1;
+		d = level - level_sign * state->envelope->attack_level;
+		level = level_sign * state->envelope->attack_level + d * state->time_playing / state->envelope->attack_length;
+	} else if (state->effect.replay.length) {
+		t = state->time_playing - state->effect.replay.length + state->envelope->fade_length;
+		if (t > 0) {
+			level_sign = level < 0 ? -1 : 1;
+			d = level - level_sign * state->envelope->fade_level;
+			level = level - d * t / state->envelope->fade_length;
 		}
-	} else {
-		level = ramp->start_level;
 	}
 
-	return fixp_sin16(degrees) * level / 0x7fff;
+	return state->direction_gain * level / 0x7fff;
 }
 
-static inline int lg4ff_calculate_periodic(struct lg4ff_effect_state *state,
-		unsigned long t)
+static __always_inline int lg4ff_calculate_ramp(struct lg4ff_effect_state *state)
+{
+	struct ff_ramp_effect *ramp = &state->effect.u.ramp;
+	int level = INT_MAX;
+	int level_sign;
+	long d, t;
+
+	if (state->time_playing < state->envelope->attack_length) {
+		level = ramp->start_level;
+		level_sign =  level < 0 ? -1 : 1;
+		t = state->envelope->attack_length - state->time_playing;
+		d = level - level_sign * state->envelope->attack_level;
+		level = level_sign * state->envelope->attack_level + d * t / state->envelope->attack_length;
+	} else if (state->effect.replay.length && state->time_playing >= state->effect.replay.length - state->envelope->fade_length) {
+		level = ramp->end_level;
+		level_sign = level < 0 ? -1 : 1;
+		t = state->time_playing - state->effect.replay.length + state->envelope->fade_length;
+		d = level_sign * state->envelope->fade_level - level;
+		level = level - d * t / state->envelope->fade_length;
+	} else {
+		t = state->time_playing - state->envelope->attack_length;
+		level = ramp->start_level + ((t * state->slope) >> 16);
+	}
+
+	return state->direction_gain * level / 0x7fff;
+}
+
+static __always_inline int lg4ff_calculate_periodic(struct lg4ff_effect_state *state)
 {
 	struct ff_periodic_effect *periodic = &state->effect.u.periodic;
-	int degrees = state->effect.direction * 360 / 0xffff;
-	int phase = ((t + state->current_phase) % periodic->period) * 360 / periodic->period;
 	int level = periodic->offset;
+	int magnitude = periodic->magnitude;
+	int magnitude_sign = magnitude < 0 ? -1 : 1;
+	long d, t;
+
+	if (state->time_playing < state->envelope->attack_length) {
+		d = magnitude - magnitude_sign * state->envelope->attack_level;
+		magnitude = magnitude_sign * state->envelope->attack_level + d * state->time_playing / state->envelope->attack_length;
+	} else if (state->effect.replay.length) {
+		t = state->time_playing - state->effect.replay.length + state->envelope->fade_length;
+		if (t > 0) {
+			d = magnitude - magnitude_sign * state->envelope->fade_level;
+			magnitude = magnitude - d * t / state->envelope->fade_length;
+		}
+	}
 
 	switch (periodic->waveform) {
 		case FF_SINE:
-			level += fixp_sin16(phase) * periodic->magnitude / 0x7fff;
+			level += fixp_sin16(state->phase) * magnitude / 0x7fff;
 			break;
 		case FF_SQUARE:
-			level += (phase < 180 ? 1 : -1) * periodic->magnitude;
+			level += (state->phase < 180 ? 1 : -1) * magnitude;
 			break;
 		case FF_TRIANGLE:
-			level += abs(phase * periodic->magnitude * 2 / 360 - periodic->magnitude) * 2 - periodic->magnitude;
+			level += abs(state->phase * magnitude * 2 / 360 - magnitude) * 2 - magnitude;
 			break;
 		case FF_SAW_UP:
-			level += phase * periodic->magnitude * 2 / 360 - periodic->magnitude;
+			level += state->phase * magnitude * 2 / 360 - magnitude;
 			break;
 		case FF_SAW_DOWN:
-			level += periodic->magnitude - phase * periodic->magnitude * 2 / 360;
+			level += magnitude - state->phase * magnitude * 2 / 360;
 			break;
 	}
 
-	return fixp_sin16(degrees) * level / 0x7fff;
+	return state->direction_gain * level / 0x7fff;
 }
 
-static inline void lg4ff_calculate_spring(struct lg4ff_effect_parameters
-		*parameters, struct lg4ff_effect_state *state)
+static __always_inline void lg4ff_calculate_spring(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
 {
 	struct ff_condition_effect *condition = &state->effect.u.condition[0];
 	int d1;
@@ -520,8 +559,7 @@ static inline void lg4ff_calculate_spring(struct lg4ff_effect_parameters
 	parameters->clip = condition->left_saturation;
 }
 
-static inline void lg4ff_calculate_damper(struct lg4ff_effect_parameters
-		*parameters, struct lg4ff_effect_state *state)
+static __always_inline void lg4ff_calculate_damper(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
 {
 	struct ff_condition_effect *condition = &state->effect.u.condition[0];
 
@@ -530,14 +568,75 @@ static inline void lg4ff_calculate_damper(struct lg4ff_effect_parameters
 	parameters->clip = condition->left_saturation;
 }
 
-static inline void lg4ff_calculate_friction(struct lg4ff_effect_parameters
-		*parameters, struct lg4ff_effect_state *state)
+static __always_inline void lg4ff_calculate_friction(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
 {
 	struct ff_condition_effect *condition = &state->effect.u.condition[0];
 
 	parameters->k1 = condition->left_coeff;
 	parameters->k2 = condition->right_coeff;
 	parameters->clip = condition->left_saturation;
+}
+
+static __always_inline struct ff_envelope *lg4ff_effect_envelope(struct ff_effect *effect)
+{
+	switch (effect->type) {
+		case FF_CONSTANT:
+			return &effect->u.constant.envelope;
+		case FF_RAMP:
+			return &effect->u.ramp.envelope;
+		case FF_PERIODIC:
+			return &effect->u.periodic.envelope;
+	}
+
+	return NULL;
+}
+
+static __always_inline void lg4ff_update_state(struct lg4ff_effect_state *state, const unsigned long now)
+{
+	struct ff_effect *effect = &state->effect;
+	unsigned long phase_time;
+
+	if (!__test_and_set_bit(FF_EFFECT_ALLSET, &state->flags)) {
+		state->play_at = state->start_at + effect->replay.delay;
+		if (!test_bit(FF_EFFECT_UPDATING, &state->flags)) {
+			state->updated_at = state->play_at;
+		}
+		state->direction_gain = fixp_sin16(effect->direction * 360 / 0xffff);
+		if (effect->type == FF_PERIODIC) {
+			state->phase_adj = effect->u.periodic.phase * 360 / effect->u.periodic.period;
+		}
+		if (effect->replay.length) {
+			state->stop_at = state->play_at + effect->replay.length;
+		}
+	}
+
+	if (__test_and_clear_bit(FF_EFFECT_UPDATING, &state->flags)) {
+		if (effect->type == FF_PERIODIC) {
+			state->phase_adj = state->phase;
+		}
+	}
+
+	state->envelope = lg4ff_effect_envelope(effect);
+
+	state->slope = 0;
+	if (effect->type == FF_RAMP && effect->replay.length) {
+		state->slope = ((effect->u.ramp.end_level - effect->u.ramp.start_level) << 16) / (effect->replay.length - state->envelope->attack_length - state->envelope->fade_length);
+	}
+
+	if (!test_bit(FF_EFFECT_PLAYING, &state->flags) && time_after_eq(now,
+				state->play_at) && (effect->replay.length == 0 ||
+					time_before(now, state->stop_at))) {
+		__set_bit(FF_EFFECT_PLAYING, &state->flags);
+	}
+
+	if (test_bit(FF_EFFECT_PLAYING, &state->flags)) {
+		state->time_playing = time_diff(now, state->play_at);
+		if (effect->type == FF_PERIODIC) {
+			phase_time = time_diff(now, state->updated_at);
+			state->phase = (phase_time % effect->u.periodic.period) * 360 / effect->u.periodic.period;
+			state->phase += state->phase_adj % 360;
+		}
+	}
 }
 
 static void lg4ff_timer(struct timer_list *t)
@@ -545,105 +644,78 @@ static void lg4ff_timer(struct timer_list *t)
 	struct lg4ff_device_entry *entry = from_timer(entry, t, timer);
 	struct lg4ff_slot *slot;
 	struct lg4ff_effect_state *state;
-	struct ff_effect *effect;
 	struct lg4ff_effect_parameters parameters[4];
 	struct timespec t0, t1;
 	unsigned long handler_time;
-	unsigned long play_offset;
 	unsigned long now = jiffies_to_msecs(jiffies);
 	unsigned long flags;
-	int phase;
-	int count = entry->effects_playing;
+	int count;
 	int effect_id;
 	int i;
-
-	spin_lock_irqsave(&entry->timer_lock, flags);
 
 	getrawmonotonic(&t0);
 
 	memset(parameters, 0, sizeof(parameters));
 
+	spin_lock_irqsave(&entry->timer_lock, flags);
+
+	count = entry->effects_used;
+
 	for (effect_id = 0; effect_id < LG4FF_MAX_EFFECTS; effect_id++) {
+
 		if (!count) {
 			break;
 		}
 
 		state = &entry->states[effect_id];
-		if (state->stage == FF_EFFECT_STOPPED) {
+
+		if (!test_bit(FF_EFFECT_STARTED, &state->flags)) {
 			continue;
 		}
 
 		count--;
 
-		effect = &state->effect;
-
-		if (state->stage != FF_EFFECT_STARTING && state->stop_at != 0 &&
-				now > state->stop_at) {
-			state->count--;
-			if (state->count) {
-				state->stage = FF_EFFECT_STARTING;
+		if (test_bit(FF_EFFECT_ALLSET, &state->flags)) {
+			if (state->effect.replay.length && time_after_eq(now, state->stop_at)) {
+				STOP_EFFECT(state);
+				if (!--state->count) {
+					entry->effects_used--;
+					continue;
+				}
+				__set_bit(FF_EFFECT_STARTED, &state->flags);
 				state->start_at = state->stop_at;
-			} else {
-				state->stage = FF_EFFECT_STOPPED;
-				entry->effects_playing--;
-				continue;
 			}
 		}
 
-		if (state->stage == FF_EFFECT_STARTING || state->stage == FF_EFFECT_UPDATING) {
-			if (state->stage == FF_EFFECT_STARTING) {
-				state->play_at = state->start_at + effect->replay.delay;
-				if (effect->type == FF_PERIODIC) {
-					state->current_phase = effect->u.periodic.phase;
-					state->current_period = effect->u.periodic.period;
-				}
-				if (effect->replay.length) {
-					state->stop_at = state->play_at + effect->replay.length;
-				} else {
-					state->stop_at = 0;
-				}
-			} else if (effect->type == FF_PERIODIC) {
-				play_offset = now - state->play_at;
-				phase = ((play_offset + state->current_phase) % state->current_period) * 0xffff / state->current_period;
-				state->current_period = effect->u.periodic.period;
-				state->current_phase = (phase * state->current_period / 0xffff + effect->u.periodic.phase) - (play_offset % state->current_period);
-				if (state->current_phase < 0) {
-					state->current_phase += state->current_period;
-				}
-			}
-			//state->hold_at = state->play_at + effect->envelope.attack_length;
-			//state->fade_at = state->stop_at - effect->envelope.fade_length;
-			state->stage = FF_EFFECT_PLAYING;
-		}
+		lg4ff_update_state(state, now);
 
-		if (now < state->play_at) {
+		if (!test_bit(FF_EFFECT_PLAYING, &state->flags)) {
 			continue;
 		}
 
-		play_offset = now - state->play_at;
-		switch (effect->type) {
+		switch (state->effect.type) {
 			case FF_CONSTANT:
-				parameters[0].level += lg4ff_calculate_constant(state, play_offset);
+				parameters[0].level += lg4ff_calculate_constant(state);
 				break;
 			case FF_RAMP:
-				parameters[0].level += lg4ff_calculate_ramp(state, play_offset);
+				parameters[0].level += lg4ff_calculate_ramp(state);
 				break;
 			case FF_PERIODIC:
-				parameters[0].level += lg4ff_calculate_periodic(state, play_offset);
+				parameters[0].level += lg4ff_calculate_periodic(state);
 				break;
 			case FF_SPRING:
-				lg4ff_calculate_spring(&parameters[1], state);
+				lg4ff_calculate_spring(state, &parameters[1]);
 				break;
 			case FF_DAMPER:
-				lg4ff_calculate_damper(&parameters[2], state);
+				lg4ff_calculate_damper(state, &parameters[2]);
 				break;
 			case FF_FRICTION:
-				lg4ff_calculate_friction(&parameters[3], state);
+				lg4ff_calculate_friction(state, &parameters[3]);
 				break;
 		}
 	}
 
-	parameters->level *= entry->gain / 0xffff;
+	parameters[0].level *= entry->gain / 0xffff;
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
@@ -673,7 +745,7 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device 
 	__u8 cmd[8] = {0};
 	int i;
 
-	// Fixed loop mode off
+	// Set/unset fixed loop mode
 	cmd[0] = 0x0d;
 	cmd[1] = fixed_loop ? 1 : 0;
 	lg4ff_send_cmd(entry, cmd);
@@ -696,7 +768,7 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device 
 		entry->slots[i].is_updated = 0;
 	}
 
-	entry->effects_playing = 0;
+	entry->effects_used = 0;
 
 	spin_lock_init(&entry->timer_lock);
 
@@ -709,7 +781,7 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 	struct hid_device *hid = input_get_drvdata(dev);
 	struct lg4ff_device_entry *entry;
 	struct lg4ff_effect_state *state;
-	//unsigned long now = jiffies;
+	unsigned long now = jiffies_to_msecs(jiffies);
 	unsigned long flags;
 
 	entry = lg4ff_get_device_entry(hid);
@@ -717,14 +789,23 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 		return -EINVAL;
 	}
 
+	if (effect->type == FF_PERIODIC && effect->u.periodic.period == 0) {
+		return -EINVAL;
+	}
+
 	state = &entry->states[effect->id];
+
+	if (test_bit(FF_EFFECT_STARTED, &state->flags) && effect->type != state->effect.type) {
+		return -EINVAL;
+	}
 
 	spin_lock_irqsave(&entry->timer_lock, flags);
 
 	state->effect = *effect;
 
-	if (state->stage == FF_EFFECT_PLAYING) {
-		state->stage = FF_EFFECT_UPDATING;
+	if (test_bit(FF_EFFECT_STARTED, &state->flags)) {
+		__set_bit(FF_EFFECT_UPDATING, &state->flags);
+		state->updated_at = now;
 	}
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
@@ -750,16 +831,18 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 	spin_lock_irqsave(&entry->timer_lock, flags);
 
 	if (value > 0) {
-		if (state->stage == FF_EFFECT_STOPPED) {
-			entry->effects_playing++;
+		if (test_bit(FF_EFFECT_STARTED, &state->flags)) {
+			STOP_EFFECT(state);
+		} else {
+			entry->effects_used++;
 		}
-		state->stage = FF_EFFECT_STARTING;
+		__set_bit(FF_EFFECT_STARTED, &state->flags);
 		state->start_at = now;
 		state->count = value;
 	} else {
-		if (state->stage != FF_EFFECT_STOPPED) {
-			state->stage = FF_EFFECT_STOPPED;
-			entry->effects_playing--;
+		if (test_bit(FF_EFFECT_STARTED, &state->flags)) {
+			STOP_EFFECT(state);
+			entry->effects_used--;
 		}
 	}
 
