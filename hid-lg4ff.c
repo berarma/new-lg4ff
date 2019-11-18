@@ -736,7 +736,16 @@ static void lg4ff_timer(struct timer_list *t)
 		DEBUG("Timer function slow: %lu", handler_time);
 	}
 
-	mod_timer(&entry->timer, msecs_to_jiffies(now + timer_msecs));
+	if (entry->effects_used < 0) {
+		DEBUG("Error: effects_used = %d", entry->effects_used);
+	}
+
+	if (entry->effects_used) {
+		mod_timer(&entry->timer, msecs_to_jiffies(now + timer_msecs));
+	} else {
+		DEBUG("Stop timer.");
+		del_timer(&entry->timer);
+	}
 }
 
 static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device *ff)
@@ -773,7 +782,6 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device 
 	spin_lock_init(&entry->timer_lock);
 
 	timer_setup(&entry->timer, lg4ff_timer, 0);
-	mod_timer(&entry->timer, jiffies + msecs_to_jiffies(timer_msecs));
 }
 
 static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, struct ff_effect *old)
@@ -835,6 +843,10 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 			STOP_EFFECT(state);
 		} else {
 			entry->effects_used++;
+			if (!timer_pending(&entry->timer)) {
+				DEBUG("Start timer.");
+				mod_timer(&entry->timer, jiffies + msecs_to_jiffies(timer_msecs));
+			}
 		}
 		__set_bit(FF_EFFECT_STARTED, &state->flags);
 		state->start_at = now;
