@@ -923,7 +923,7 @@ int lg4ff_raw_event(struct hid_device *hdev, struct hid_report *report,
 		return 0;
 
 	/* adjust HID report present combined pedals data */
-	if (entry->wdata.combine) {
+	if (entry->wdata.combine == 1) {
 		switch (entry->wdata.product_id) {
 		case USB_DEVICE_ID_LOGITECH_WHEEL:
 			rd[5] = rd[3];
@@ -958,6 +958,25 @@ int lg4ff_raw_event(struct hid_device *hdev, struct hid_report *report,
 		/* Compute a combined axis when wheel does not supply it */
 		rd[offset] = (0xFF + rd[offset] - rd[offset+1]) >> 1;
 		rd[offset+1] = 0x7F;
+		return 1;
+	}
+
+	if (entry->wdata.combine == 2) {
+		switch (entry->wdata.product_id) {
+			case USB_DEVICE_ID_LOGITECH_G25_WHEEL:
+			case USB_DEVICE_ID_LOGITECH_G27_WHEEL:
+				offset = 5;
+				break;
+			case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
+				offset = 6;
+				break;
+			default:
+				return 0;
+		}
+
+		/* Compute a combined axis when wheel does not supply it */
+		rd[offset] = (0xFF + rd[offset] - rd[offset+2]) >> 1;
+		rd[offset+2] = 0x7F;
 		return 1;
 	}
 
@@ -1453,8 +1472,8 @@ static ssize_t lg4ff_combine_store(struct device *dev, struct device_attribute *
 		return -EINVAL;
 	}
 
-	if (combine > 1)
-		combine = 1;
+	if (combine > 2)
+		combine = 2;
 
 	entry->wdata.combine = combine;
 	return count;
