@@ -1916,7 +1916,7 @@ int lg4ff_init(struct hid_device *hid)
 
 	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (new)\n");
 
-	DEBUG("HZ (jiffies) = %d", HZ);
+	hid_info(hid, "HZ (jiffies) = %d, timer period = %d", HZ, jiffies_to_msecs(msecs_to_jiffies(timer_msecs)));
 
 	return 0;
 
