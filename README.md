@@ -2,17 +2,17 @@
 
 Experimental new Logitech Force Feedback module for driving wheels
 
-This work is unfinished and highly experimental. Expect the unexpected.
+This driver implements all possible FF effects for Logitech wheels, except the
+Logitech G920 that should already support them.
 
-## Goals
+## Differences with the in-tree module
 
-I'm testing some ideas to improve the force feedback support on most Logitech
-wheels. These include all Logitech driving wheels with force feedback support
-in Linux except the Logitech Driving Force G920.
+This module adds the following features:
 
-The final goal is having a better force feedback support module that fully
-supports all hardware capabilities and provides a set of features similar to
-the Logitech Driving Force G920.
+ - Support for most effects (except inertia) defined in the Linux FF API.
+ - Asynchronous operations with realtime handling of effects.
+ - Rate limited data transfers to the device with some latency.
+ - Combine accelerator and clutch.
 
 ## Requirements
 
@@ -23,16 +23,35 @@ the Logitech Driving Force G920.
 ## Build and install
 
 ```
-# make
-# sudo make install
-# sudo depmod -A
-# sudo rmmod hid-logitech
-# sudo modprobe hid-logitech-new
+$ make
+$ sudo make install
+$ sudo depmod -A
 ```
+
+Unload the in-tree module:
+`$ sudo rmmod hid-logitech`
+
+Load the new module:
+`$ sudo modprobe hid-logitech-new`
+
+## Options
+
+Use modinfo to query for available options.
+
+ - timer_msecs: Set the timer period. The timer is used to render and send
+   commands to the device. It affects the maximum latency and the maximum rate
+   for commands to be sent. Maximum 4 commands every timer period. It will be
+   rounded up to 4ms in kernels with 250HZ timer clock. It defaults to 4ms.
+ - fixed_loop: Set fixed or fast loop. By default fast loop is used.
+
+Write '2' to the `combine_pedals` file to combine accelerator and clutch
+(change 0000:0000:0000.0000 in path as appropiate):
+
+`$ echo 2 > /sys/bus/hid/drivers/logitech/0000:0000:0000.0000/combine_pedals`
 
 ## Contributing
 
-Please, use the issues to discuss ideas, direction, etc.
+Please, use the issues to discuss bugs, ideas, etc.
 
 ## Disclaimer
 
