@@ -18,7 +18,8 @@ This module adds the following features:
 
  - GNU Make
  - GCC
- - `linux-kbuild` and `linux-headers` packages matching the installed kernel version.
+ - `linux-kbuild` and `linux-headers` packages matching the installed kernel
+   version.
 
 ## Build and install
 
@@ -28,11 +29,26 @@ $ sudo make install
 $ sudo depmod -A
 ```
 
+In some distributions, the install step might throw some SSL errors because
+it's trying to sign the module. These errors can be ignored.
+
 Unload the in-tree module:
 `$ sudo rmmod hid-logitech`
 
 Load the new module:
 `$ sudo modprobe hid-logitech-new`
+
+Check that the driver is loaded:
+
+`sudo dmesg`
+
+You should see something like this (notice the word 'new' at the end of the
+module description):
+
+```
+[347092.750524] logitech 0003:046D:C24F.000B: Force feedback support for Logitech Gaming Wheels (new)
+[347092.750525] logitech 0003:046D:C24F.000B: HZ (jiffies) = 250, timer period = 4
+```
 
 ## Options
 
