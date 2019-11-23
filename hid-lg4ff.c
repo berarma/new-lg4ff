@@ -721,7 +721,7 @@ static void lg4ff_timer(struct timer_list *t)
 		}
 	}
 
-	parameters[0].level *= entry->gain / 0xffff;
+	parameters[0].level = (long)parameters[0].level * entry->gain / 0xffff;
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
