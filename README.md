@@ -26,17 +26,16 @@ This module adds the following features:
 ```
 $ make
 $ sudo make install
-$ sudo depmod -A
 ```
 
 In some distributions, the install step might throw some SSL errors because
 it's trying to sign the module. These errors can be ignored.
 
-Unload the in-tree module:
-`$ sudo rmmod hid-logitech`
+Load the module:
+`$ sudo make load`
 
-Load the new module:
-`$ sudo modprobe hid-logitech-new`
+Unload the module (restoring the in-kernel module):
+`$ sudo make unload`
 
 Check that the driver is loaded:
 
