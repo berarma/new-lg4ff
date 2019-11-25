@@ -50,6 +50,21 @@ module description):
 [347092.750524] logitech 0003:046D:C24F.000B: Force feedback support for Logitech Gaming Wheels (new)
 [347092.750525] logitech 0003:046D:C24F.000B: HZ (jiffies) = 250, timer period = 4
 ```
+## How to use with dkms ##
+
+DKMS can be utilized to rebuild the module on new kernel installs.
+
+From your package manager of choice, install the package providing the `dkms` command.
+
+To install the module, follow these steps:
+
+```
+sudo mkdir -p /usr/src/new-lg4ff-0.1
+sudo cp -R . /usr/src/new-lg4ff-0.1
+sudo dkms install -m new-lg4ff -v 0.1
+```
+
+This installs the module to the system src directory and allows the module to be rebuilt any time the kernel updates.
 
 ## Options
 
