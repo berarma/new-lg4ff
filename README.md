@@ -23,6 +23,29 @@ This module adds the following features:
 
 ## Build and install
 
+The module can be installed with DKMS or manually. Follow just one of the
+following procedures.
+
+If you want to use DKMS but the module was previously installed with the manual
+method delete the module by hand:
+
+`$ sudo rm /lib/modules/$(uname -r)/extra/hid-logitech-new.ko`
+
+### DKMS
+
+This installs the module to the system `src` directory and allows the module to
+be rebuilt any time the kernel updates.
+
+From your package manager of choice, install the package providing the `dkms` command.
+
+Download the project to `/usr/src/new-lg4ff`.
+
+Run the command:
+
+`$ sudo dkms install /usr/src/new-lg4ff`
+
+### Manual method
+
 ```
 $ make
 $ sudo make install
@@ -39,7 +62,9 @@ Unload the module (restoring the in-kernel module):
 
 `$ sudo make unload`
 
-Check that the driver is loaded:
+### Check that the driver is loaded
+
+Run:
 
 `sudo dmesg`
 
