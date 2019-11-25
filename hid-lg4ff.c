@@ -438,8 +438,8 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 			s1 = parameters->k1 < 0;
 			s2 = parameters->k2 < 0;
 			slot->current_cmd[1] = 0x0e;
-			slot->current_cmd[2] = SCALE_VALUE_U16(abs(parameters->k1), 8);
-			slot->current_cmd[3] = SCALE_VALUE_U16(abs(parameters->k2), 8);
+			slot->current_cmd[2] = SCALE_VALUE_U16(abs(parameters->k1) * 2, 8);
+			slot->current_cmd[3] = SCALE_VALUE_U16(abs(parameters->k2) * 2, 8);
 			slot->current_cmd[4] = SCALE_VALUE_U16(parameters->clip, 8);
 			slot->current_cmd[5] = (s2 << 4) + s1;
 			slot->current_cmd[6] = 0;
