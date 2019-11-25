@@ -1,9 +1,9 @@
 # new-lg4ff
 
-Experimental new Logitech Force Feedback module for driving wheels
+Experimental Logitech Force Feedback module for driving wheels
 
 This driver implements all possible FF effects for Logitech wheels, except the
-Logitech G920 that should already support them.
+Logitech G920 that should already support them by hardware.
 
 ## Differences with the in-tree module
 
@@ -32,9 +32,11 @@ In some distributions, the install step might throw some SSL errors because
 it's trying to sign the module. These errors can be ignored.
 
 Load the module:
+
 `$ sudo make load`
 
 Unload the module (restoring the in-kernel module):
+
 `$ sudo make unload`
 
 Check that the driver is loaded:
