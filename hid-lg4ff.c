@@ -729,9 +729,7 @@ static void lg4ff_timer(struct timer_list *t)
 		slot = &entry->slots[i];
 		lg4ff_update_slot(slot, &parameters[i]);
 		if (slot->is_updated) {
-			if (slot->is_updated) {
-				lg4ff_send_cmd(entry, slot->current_cmd);
-			}
+			lg4ff_send_cmd(entry, slot->current_cmd);
 			slot->is_updated = 0;
 		}
 	}
