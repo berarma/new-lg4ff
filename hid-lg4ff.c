@@ -108,8 +108,8 @@ struct lg4ff_effect_state {
 
 struct lg4ff_effect_parameters {
 	int level;
-	unsigned int d1;
-	unsigned int d2;
+	int d1;
+	int d2;
 	int k1;
 	int k2;
 	unsigned int clip;
@@ -389,7 +389,7 @@ void lg4ff_send_cmd(struct lg4ff_device_entry *entry, __u8 *cmd)
 	value[6] = cmd[6];
 	hid_hw_request(entry->hid, entry->report, HID_REQ_SET_REPORT);
 	spin_unlock_irqrestore(&entry->report_lock, flags);
-	//DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
+	DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
 void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
@@ -413,8 +413,8 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 			slot->current_cmd[6] = 0;
 			break;
 		case FF_SPRING:
-			d1 = SCALE_VALUE_U16(((parameters->d1 + 0x8000) & 0xffff), 11);
-			d2 = SCALE_VALUE_U16(((parameters->d2 + 0x8000) & 0xffff), 11);
+			d1 = SCALE_VALUE_U16(((parameters->d1) + 0x8000) & 0xffff, 11);
+			d2 = SCALE_VALUE_U16(((parameters->d2) + 0x8000) & 0xffff, 11);
 			s1 = parameters->k1 < 0;
 			s2 = parameters->k2 < 0;
 			slot->current_cmd[1] = 0x0b;
@@ -554,27 +554,18 @@ static __always_inline void lg4ff_calculate_spring(struct lg4ff_effect_state *st
 	if (d2 > parameters->d2) {
 		parameters->d2 = d2;
 	}
-	parameters->k1 = condition->left_coeff;
-	parameters->k2 = condition->right_coeff;
-	parameters->clip = condition->left_saturation;
+	parameters->k1 += condition->left_coeff;
+	parameters->k2 += condition->right_coeff;
+	parameters->clip = max(parameters->clip, (unsigned)max(condition->left_saturation, condition->right_saturation));
 }
 
-static __always_inline void lg4ff_calculate_damper(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
+static __always_inline void lg4ff_calculate_resistance(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
 {
 	struct ff_condition_effect *condition = &state->effect.u.condition[0];
 
-	parameters->k1 = condition->left_coeff;
-	parameters->k2 = condition->right_coeff;
-	parameters->clip = condition->left_saturation;
-}
-
-static __always_inline void lg4ff_calculate_friction(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
-{
-	struct ff_condition_effect *condition = &state->effect.u.condition[0];
-
-	parameters->k1 = condition->left_coeff;
-	parameters->k2 = condition->right_coeff;
-	parameters->clip = condition->left_saturation;
+	parameters->k1 += condition->left_coeff;
+	parameters->k2 += condition->right_coeff;
+	parameters->clip = max(parameters->clip, (unsigned)max(condition->left_saturation, condition->right_saturation));
 }
 
 static __always_inline struct ff_envelope *lg4ff_effect_envelope(struct ff_effect *effect)
@@ -713,10 +704,10 @@ static void lg4ff_timer(struct timer_list *t)
 				lg4ff_calculate_spring(state, &parameters[1]);
 				break;
 			case FF_DAMPER:
-				lg4ff_calculate_damper(state, &parameters[2]);
+				lg4ff_calculate_resistance(state, &parameters[2]);
 				break;
 			case FF_FRICTION:
-				lg4ff_calculate_friction(state, &parameters[3]);
+				lg4ff_calculate_resistance(state, &parameters[3]);
 				break;
 		}
 	}
