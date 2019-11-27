@@ -1,5 +1,5 @@
-KVERSION ?= `uname -r`
-KDIR ?= /lib/modules/${KVERSION}/build
+KVERSION := `uname -r`
+KDIR := /lib/modules/${KVERSION}/build
 
 default:
 	$(MAKE) -C $(KDIR) M=$$PWD
