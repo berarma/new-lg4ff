@@ -67,6 +67,7 @@
 #define SCALE_VALUE_U16(x, bits) (CLAMP_VALUE_U16(x) >> (16 - bits))
 #define TRANSLATE_FORCE(x) ((CLAMP_VALUE_S16(x) + 0x8000) >> 8)
 #define STOP_EFFECT(state) ((state)->flags = 0)
+#define JIFFIES2MS(jiffies) ((jiffies) * 1000 / HZ)
 
 #define DEFAULT_TIMER_PERIOD 4
 #define LG4FF_MAX_EFFECTS 16
@@ -645,7 +646,8 @@ static void lg4ff_timer(struct timer_list *t)
 	struct lg4ff_effect_parameters parameters[4];
 	struct timespec t0, t1;
 	unsigned long handler_time;
-	unsigned long now = jiffies_to_msecs(jiffies);
+	unsigned long jiffies_now = jiffies;
+	unsigned long now = JIFFIES2MS(jiffies_now);
 	unsigned long flags;
 	unsigned int gain;
 	int count;
@@ -653,6 +655,7 @@ static void lg4ff_timer(struct timer_list *t)
 	int i;
 
 	getrawmonotonic(&t0);
+	//DEBUG("timer in %lu", jiffies);
 
 	memset(parameters, 0, sizeof(parameters));
 
@@ -740,11 +743,14 @@ static void lg4ff_timer(struct timer_list *t)
 	}
 
 	if (entry->effects_used) {
-		mod_timer(&entry->timer, msecs_to_jiffies(now + timer_msecs));
+		mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(timer_msecs));
+		//DEBUG("Mod timer %lu.", jiffies_now + msecs_to_jiffies(timer_msecs));
 	} else {
 		DEBUG("Stop timer.");
 		del_timer(&entry->timer);
 	}
+
+	//DEBUG("timer out %lu", jiffies);
 }
 
 static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device *ff)
@@ -788,7 +794,7 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 	struct hid_device *hid = input_get_drvdata(dev);
 	struct lg4ff_device_entry *entry;
 	struct lg4ff_effect_state *state;
-	unsigned long now = jiffies_to_msecs(jiffies);
+	unsigned long now = JIFFIES2MS(jiffies);
 	unsigned long flags;
 
 	entry = lg4ff_get_device_entry(hid);
@@ -825,7 +831,7 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 	struct hid_device *hid = input_get_drvdata(dev);
 	struct lg4ff_device_entry *entry;
 	struct lg4ff_effect_state *state;
-	unsigned long now = jiffies_to_msecs(jiffies);
+	unsigned long now = JIFFIES2MS(jiffies);
 	unsigned long flags;
 
 	entry = lg4ff_get_device_entry(hid);
@@ -843,8 +849,8 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 		} else {
 			entry->effects_used++;
 			if (!timer_pending(&entry->timer)) {
-				DEBUG("Start timer.");
 				mod_timer(&entry->timer, jiffies + msecs_to_jiffies(timer_msecs));
+				DEBUG("Start timer %lu %lu.", jiffies, jiffies + msecs_to_jiffies(timer_msecs));
 			}
 		}
 		__set_bit(FF_EFFECT_STARTED, &state->flags);
@@ -1993,7 +1999,7 @@ int lg4ff_init(struct hid_device *hid)
 
 	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (new)\n");
 
-	hid_info(hid, "HZ (jiffies) = %d, timer period = %d", HZ, jiffies_to_msecs(msecs_to_jiffies(timer_msecs)));
+	hid_info(hid, "HZ (jiffies) = %d, timer period = %d ms", HZ, jiffies_to_msecs(msecs_to_jiffies(timer_msecs)));
 
 	return 0;
 
