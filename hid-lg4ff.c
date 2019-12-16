@@ -641,11 +641,10 @@ static __always_inline void lg4ff_update_state(struct lg4ff_effect_state *state,
 static void lg4ff_timer(struct timer_list *t)
 {
 	struct lg4ff_device_entry *entry = from_timer(entry, t, timer);
+	struct usbhid_device *usbhid = entry->hid->driver_data;
 	struct lg4ff_slot *slot;
 	struct lg4ff_effect_state *state;
 	struct lg4ff_effect_parameters parameters[4];
-	struct timespec t0, t1;
-	unsigned long handler_time;
 	unsigned long jiffies_now = jiffies;
 	unsigned long now = JIFFIES2MS(jiffies_now);
 	unsigned long flags;
@@ -654,8 +653,14 @@ static void lg4ff_timer(struct timer_list *t)
 	int effect_id;
 	int i;
 
-	getrawmonotonic(&t0);
 	//DEBUG("timer in %lu", jiffies);
+
+	if (usbhid->outhead != usbhid->outtail) {
+		timer_msecs += 4;
+		DEBUG("Commands stacking up, increasing timer period to %d ms.", timer_msecs);
+		mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(4));
+		return;
+	}
 
 	memset(parameters, 0, sizeof(parameters));
 
@@ -730,16 +735,6 @@ static void lg4ff_timer(struct timer_list *t)
 			lg4ff_send_cmd(entry, slot->current_cmd);
 			slot->is_updated = 0;
 		}
-	}
-
-	getrawmonotonic(&t1);
-	handler_time = (t1.tv_nsec > t0.tv_nsec ? 0 : 1000000000) + t1.tv_nsec - t0.tv_nsec;
-	if (handler_time > timer_msecs * 1000000 / 2) {
-		DEBUG("Timer function slow: %lu", handler_time);
-	}
-
-	if (entry->effects_used < 0) {
-		DEBUG("Error: effects_used = %d", entry->effects_used);
 	}
 
 	if (entry->effects_used) {
