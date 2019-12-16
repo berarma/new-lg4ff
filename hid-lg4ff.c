@@ -154,6 +154,7 @@ struct lg4ff_device_entry {
 	struct lg4ff_effect_state states[LG4FF_MAX_EFFECTS];
 	int effects_used;
 	u16 gain;
+	u16 autocenter;
 };
 
 static const signed short lg4ff_wheel_effects[] = {
@@ -646,6 +647,7 @@ static void lg4ff_timer(struct timer_list *t)
 	unsigned long handler_time;
 	unsigned long now = jiffies_to_msecs(jiffies);
 	unsigned long flags;
+	unsigned int gain;
 	int count;
 	int effect_id;
 	int i;
@@ -653,6 +655,8 @@ static void lg4ff_timer(struct timer_list *t)
 	getrawmonotonic(&t0);
 
 	memset(parameters, 0, sizeof(parameters));
+
+	gain = entry->gain;
 
 	spin_lock_irqsave(&entry->timer_lock, flags);
 
@@ -712,9 +716,9 @@ static void lg4ff_timer(struct timer_list *t)
 		}
 	}
 
-	parameters[0].level = (long)parameters[0].level * entry->gain / 0xffff;
-
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
+
+	parameters[0].level = (long)parameters[0].level * gain / 0xffff;
 
 	for (i = 0; i < 4; i++) {
 		slot = &entry->slots[i];
@@ -1022,6 +1026,8 @@ static void lg4ff_set_autocenter_default(struct input_dev *dev, u16 magnitude)
 		return;
 	}
 
+	entry->autocenter = magnitude;
+
 	value = entry->report->field[0]->value;
 
 	/* De-activate Auto-Center */
@@ -1093,6 +1099,8 @@ static void lg4ff_set_autocenter_ffex(struct input_dev *dev, u16 magnitude)
 	if (entry == NULL) {
 		return;
 	}
+
+	entry->autocenter = magnitude;
 
 	value = entry->report->field[0]->value;
 
@@ -1205,18 +1213,13 @@ static void lg4ff_set_gain(struct input_dev *dev, u16 gain)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
 	struct lg4ff_device_entry *entry;
-	unsigned long flags;
 
 	entry = lg4ff_get_device_entry(hid);
 	if (entry == NULL) {
 		return;
 	}
 
-	spin_lock_irqsave(&entry->timer_lock, flags);
-
 	entry->gain = gain;
-
-	spin_unlock_irqrestore(&entry->timer_lock, flags);
 }
 
 static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(const u16 real_product_id, const u16 target_product_id)
@@ -1546,6 +1549,84 @@ static ssize_t lg4ff_real_id_store(struct device *dev, struct device_attribute *
 	return -EPERM;
 }
 static DEVICE_ATTR(real_id, S_IRUGO, lg4ff_real_id_show, lg4ff_real_id_store);
+
+/* Export the currently set gain of the wheel */
+static ssize_t lg4ff_gain_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	size_t count;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->gain);
+	return count;
+}
+
+/* Set gain to user specified value, call appropriate function
+ * according to the type of the wheel */
+static ssize_t lg4ff_gain_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	u16 gain = simple_strtoul(buf, NULL, 10);
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	if (gain > 0xffff) {
+		gain = 0xffff;
+	}
+
+	entry->gain = gain;
+
+	return count;
+}
+static DEVICE_ATTR(gain, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_gain_show, lg4ff_gain_store);
+
+/* Export the currently set autocenter of the wheel */
+static ssize_t lg4ff_autocenter_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	size_t count;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->autocenter);
+	return count;
+}
+
+/* Set autocenter to user specified value, call appropriate function
+ * according to the type of the wheel */
+static ssize_t lg4ff_autocenter_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct hid_input *hidinput = list_entry(hid->inputs.next, struct hid_input, list);
+	struct input_dev *inputdev = hidinput->input;
+	u16 autocenter = simple_strtoul(buf, NULL, 10);
+
+	if (autocenter > 0xffff) {
+		autocenter = 0xffff;
+	}
+
+	inputdev->ff->set_autocenter(inputdev, autocenter);
+
+	return count;
+}
+static DEVICE_ATTR(autocenter, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_autocenter_show, lg4ff_autocenter_store);
 
 #ifdef CONFIG_LEDS_CLASS
 static void lg4ff_set_leds(struct hid_device *hid, u8 leds)
@@ -1887,6 +1968,13 @@ int lg4ff_init(struct hid_device *hid)
 		if (error)
 			hid_warn(hid, "Unable to create sysfs interface for \"alternate_modes\", errno %d\n", error);
 	}
+	error = device_create_file(&hid->dev, &dev_attr_gain);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"gain\", errno %d\n", error);
+	error = device_create_file(&hid->dev, &dev_attr_autocenter);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"autocenter\", errno %d\n", error);
+
 	dbg_hid("sysfs interface created\n");
 
 	/* Set the maximum range to start with */
@@ -1939,6 +2027,8 @@ int lg4ff_deinit(struct hid_device *hid)
 
 	device_remove_file(&hid->dev, &dev_attr_combine_pedals);
 	device_remove_file(&hid->dev, &dev_attr_range);
+	device_remove_file(&hid->dev, &dev_attr_gain);
+	device_remove_file(&hid->dev, &dev_attr_autocenter);
 #ifdef CONFIG_LEDS_CLASS
 	{
 		int j;
