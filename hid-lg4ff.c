@@ -85,6 +85,10 @@ static int fixed_loop = 0;
 module_param(fixed_loop, int, 0);
 MODULE_PARM_DESC(fixed_loop, "Put the device into fixed loop mode.");
 
+static int timer_mode = 2;
+module_param(timer_mode, int, 0660);
+MODULE_PARM_DESC(timer_mode, "Timer mode: 0) fixed, 1) static, 2) dynamic (default).");
+
 static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range);
 static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
 
@@ -391,7 +395,7 @@ void lg4ff_send_cmd(struct lg4ff_device_entry *entry, __u8 *cmd)
 	value[6] = cmd[6];
 	hid_hw_request(entry->hid, entry->report, HID_REQ_SET_REPORT);
 	spin_unlock_irqrestore(&entry->report_lock, flags);
-	DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
+	//DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
 void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
@@ -655,11 +659,17 @@ static void lg4ff_timer(struct timer_list *t)
 
 	//DEBUG("timer in %lu", jiffies);
 
-	if (usbhid->outhead != usbhid->outtail) {
-		timer_msecs += 4;
-		DEBUG("Commands stacking up, increasing timer period to %d ms.", timer_msecs);
-		mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(4));
-		return;
+	if (timer_mode > 0) {
+		if (usbhid->outhead != usbhid->outtail) {
+			if (timer_mode == 1) {
+				timer_msecs += 4;
+				hid_info(entry->hid, "Commands stacking up, increasing timer period to %d ms.", timer_msecs);
+			} else {
+				DEBUG("Commands stacking up, delaying timer.");
+			}
+			mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(4));
+			return;
+		}
 	}
 
 	memset(parameters, 0, sizeof(parameters));
