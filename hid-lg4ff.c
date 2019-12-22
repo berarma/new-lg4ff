@@ -133,6 +133,9 @@ struct lg4ff_wheel_data {
 	const u32 product_id;
 	u16 combine;
 	u16 range;
+	u16 autocenter;
+	u16 master_gain;
+	u16 gain;
 	const u16 min_range;
 	const u16 max_range;
 #ifdef CONFIG_LEDS_CLASS
@@ -152,14 +155,12 @@ struct lg4ff_device_entry {
 	spinlock_t timer_lock;
 	struct hid_report *report;
 	struct lg4ff_wheel_data wdata;
-
+	int (*input_dev_open)(struct input_dev *dev);
 	struct hid_device *hid;
 	struct timer_list timer;
 	struct lg4ff_slot slots[4];
 	struct lg4ff_effect_state states[LG4FF_MAX_EFFECTS];
 	int effects_used;
-	u16 gain;
-	u16 autocenter;
 };
 
 static const signed short lg4ff_wheel_effects[] = {
@@ -395,7 +396,7 @@ void lg4ff_send_cmd(struct lg4ff_device_entry *entry, __u8 *cmd)
 	value[6] = cmd[6];
 	hid_hw_request(entry->hid, entry->report, HID_REQ_SET_REPORT);
 	spin_unlock_irqrestore(&entry->report_lock, flags);
-	//DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
+	DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
 void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
@@ -451,7 +452,7 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 			slot->current_cmd[6] = 0;
 			break;
 	}
-	
+
 	if (memcmp(original_cmd, slot->current_cmd, sizeof(original_cmd))) {
 		slot->is_updated = 1;
 	}
@@ -674,7 +675,7 @@ static void lg4ff_timer(struct timer_list *t)
 
 	memset(parameters, 0, sizeof(parameters));
 
-	gain = entry->gain;
+	gain = (unsigned long)entry->wdata.master_gain * entry->wdata.gain / 0xffff;
 
 	spin_lock_irqsave(&entry->timer_lock, flags);
 
@@ -1037,7 +1038,7 @@ static void lg4ff_set_autocenter_default(struct input_dev *dev, u16 magnitude)
 		return;
 	}
 
-	entry->autocenter = magnitude;
+	entry->wdata.autocenter = magnitude;
 
 	value = entry->report->field[0]->value;
 
@@ -1111,7 +1112,7 @@ static void lg4ff_set_autocenter_ffex(struct input_dev *dev, u16 magnitude)
 		return;
 	}
 
-	entry->autocenter = magnitude;
+	entry->wdata.autocenter = magnitude;
 
 	value = entry->report->field[0]->value;
 
@@ -1230,7 +1231,7 @@ static void lg4ff_set_gain(struct input_dev *dev, u16 gain)
 		return;
 	}
 
-	entry->gain = gain;
+	entry->wdata.gain = gain;
 }
 
 static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(const u16 real_product_id, const u16 target_product_id)
@@ -1574,7 +1575,7 @@ static ssize_t lg4ff_gain_show(struct device *dev, struct device_attribute *attr
 		return -EINVAL;
 	}
 
-	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->gain);
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->wdata.master_gain);
 	return count;
 }
 
@@ -1596,7 +1597,7 @@ static ssize_t lg4ff_gain_store(struct device *dev, struct device_attribute *att
 		gain = 0xffff;
 	}
 
-	entry->gain = gain;
+	entry->wdata.master_gain = gain;
 
 	return count;
 }
@@ -1615,7 +1616,7 @@ static ssize_t lg4ff_autocenter_show(struct device *dev, struct device_attribute
 		return -EINVAL;
 	}
 
-	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->autocenter);
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->wdata.autocenter);
 	return count;
 }
 
@@ -1849,6 +1850,21 @@ static void lg4ff_destroy(struct ff_device *ff)
 {
 }
 
+static int lg4ff_open_device(struct input_dev *dev)
+{
+	struct hid_device *hid = input_get_drvdata(dev);
+	struct lg4ff_device_entry *entry;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	entry->wdata.gain = 0xffff;
+
+	return entry->input_dev_open(dev);
+}
+
 int lg4ff_init(struct hid_device *hid)
 {
 	struct hid_input *hidinput = list_entry(hid->inputs.next, struct hid_input, list);
@@ -1936,6 +1952,9 @@ int lg4ff_init(struct hid_device *hid)
 	if (error)
 		goto err_init;
 
+	entry->input_dev_open = dev->open;
+	dev->open = lg4ff_open_device;
+
 	ff = dev->ff;
 	ff->upload = lg4ff_upload_effect;
 	ff->playback = lg4ff_play_effect;
@@ -1994,7 +2013,9 @@ int lg4ff_init(struct hid_device *hid)
 		entry->wdata.set_range(hid, entry->wdata.range);
 
 	entry->hid = hid;
-	entry->gain = 0xffff;
+
+	entry->wdata.master_gain = 0xffff;
+	entry->wdata.gain = 0xffff;
 
 	lg4ff_init_slots(entry, dev->ff);
 
