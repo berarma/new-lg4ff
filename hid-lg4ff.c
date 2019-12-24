@@ -79,25 +79,6 @@
 #define FF_EFFECT_PLAYING 2
 #define FF_EFFECT_UPDATING 3
 
-static int timer_msecs = DEFAULT_TIMER_PERIOD;
-module_param(timer_msecs, int, 0660);
-MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs (when using the lowres timer it will be rounded up to jiffies).");
-
-static int fixed_loop = 0;
-module_param(fixed_loop, int, 0);
-MODULE_PARM_DESC(fixed_loop, "Put the device into fixed loop mode.");
-
-static int timer_mode = 2;
-module_param(timer_mode, int, 0660);
-MODULE_PARM_DESC(timer_mode, "Timer mode: 0) fixed, 1) static, 2) dynamic (default).");
-
-static int lowres_timer = 0;
-module_param(lowres_timer, int, 0);
-MODULE_PARM_DESC(lowres_timer, "Use low res timers.");
-
-static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range);
-static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
-
 struct lg4ff_effect_state {
 	struct ff_effect effect;
 	struct ff_envelope *envelope;
@@ -222,6 +203,9 @@ struct lg4ff_alternate_mode {
 	const char *tag;
 	const char *name;
 };
+
+static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range);
+static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
 
 static const struct lg4ff_wheel lg4ff_devices[] = {
 	{USB_DEVICE_ID_LOGITECH_WINGMAN_FG,  no_wheel_effects,    40, 180, NULL},
@@ -367,6 +351,22 @@ static const struct lg4ff_compat_mode_switch lg4ff_mode_switch_ext16_g25 = {
 	1,
 	{0xf8, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00}
 };
+
+static int timer_msecs = DEFAULT_TIMER_PERIOD;
+module_param(timer_msecs, int, 0660);
+MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs (when using the lowres timer it will be rounded up to jiffies).");
+
+static int fixed_loop = 0;
+module_param(fixed_loop, int, 0);
+MODULE_PARM_DESC(fixed_loop, "Put the device into fixed loop mode.");
+
+static int timer_mode = 2;
+module_param(timer_mode, int, 0660);
+MODULE_PARM_DESC(timer_mode, "Timer mode: 0) fixed, 1) static, 2) dynamic (default).");
+
+static int lowres_timer = 0;
+module_param(lowres_timer, int, 0);
+MODULE_PARM_DESC(lowres_timer, "Use low res timers.");
 
 static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 {
