@@ -14,6 +14,8 @@
 #include <linux/usb.h>
 #include <linux/hid.h>
 #include <linux/fixp-arith.h>
+#include <linux/hrtimer.h>
+#include <linux/ktime.h>
 
 #include "usbhid/usbhid.h"
 #include "hid-lg.h"
@@ -69,7 +71,7 @@
 #define STOP_EFFECT(state) ((state)->flags = 0)
 #define JIFFIES2MS(jiffies) ((jiffies) * 1000 / HZ)
 
-#define DEFAULT_TIMER_PERIOD 4
+#define DEFAULT_TIMER_PERIOD 2
 #define LG4FF_MAX_EFFECTS 16
 
 #define FF_EFFECT_STARTED 0
@@ -79,7 +81,7 @@
 
 static int timer_msecs = DEFAULT_TIMER_PERIOD;
 module_param(timer_msecs, int, 0660);
-MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs (it will be rounded up to jiffies).");
+MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs (when using the lowres timer it will be rounded up to jiffies).");
 
 static int fixed_loop = 0;
 module_param(fixed_loop, int, 0);
@@ -88,6 +90,10 @@ MODULE_PARM_DESC(fixed_loop, "Put the device into fixed loop mode.");
 static int timer_mode = 2;
 module_param(timer_mode, int, 0660);
 MODULE_PARM_DESC(timer_mode, "Timer mode: 0) fixed, 1) static, 2) dynamic (default).");
+
+static int lowres_timer = 0;
+module_param(lowres_timer, int, 0);
+MODULE_PARM_DESC(lowres_timer, "Use low res timers.");
 
 static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range);
 static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
@@ -158,6 +164,7 @@ struct lg4ff_device_entry {
 	int (*input_dev_open)(struct input_dev *dev);
 	struct hid_device *hid;
 	struct timer_list timer;
+	struct hrtimer hrtimer;
 	struct lg4ff_slot slots[4];
 	struct lg4ff_effect_state states[LG4FF_MAX_EFFECTS];
 	int effects_used;
@@ -643,9 +650,8 @@ static __always_inline void lg4ff_update_state(struct lg4ff_effect_state *state,
 	}
 }
 
-static void lg4ff_timer(struct timer_list *t)
+static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 {
-	struct lg4ff_device_entry *entry = from_timer(entry, t, timer);
 	struct usbhid_device *usbhid = entry->hid->driver_data;
 	struct lg4ff_slot *slot;
 	struct lg4ff_effect_state *state;
@@ -654,24 +660,23 @@ static void lg4ff_timer(struct timer_list *t)
 	unsigned long now = JIFFIES2MS(jiffies_now);
 	unsigned long flags;
 	unsigned int gain;
+	int current_period;
 	int count;
 	int effect_id;
 	int i;
 
-	//DEBUG("timer in %lu", jiffies);
-
-	if (timer_mode > 0) {
-		if (usbhid->outhead != usbhid->outtail) {
-			if (timer_mode == 1) {
-				timer_msecs += 4;
-				hid_info(entry->hid, "Commands stacking up, increasing timer period to %d ms.", timer_msecs);
-			} else {
-				DEBUG("Commands stacking up, delaying timer.");
-			}
-			mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(4));
-			return;
+	if (timer_mode > 0 && usbhid->outhead != usbhid->outtail) {
+		current_period = timer_msecs;
+		if (timer_mode == 1) {
+			timer_msecs *= 2;
+			hid_info(entry->hid, "Commands stacking up, increasing timer period to %d ms.", timer_msecs);
+		} else {
+			DEBUG("Commands stacking up, delaying timer.");
 		}
+		return current_period;
 	}
+
+	DEBUG("timer in.");
 
 	memset(parameters, 0, sizeof(parameters));
 
@@ -748,6 +753,24 @@ static void lg4ff_timer(struct timer_list *t)
 		}
 	}
 
+	DEBUG("timer out.");
+
+	return 0;
+}
+
+static void lg4ff_timer_lowres(struct timer_list *t)
+{
+	struct lg4ff_device_entry *entry = from_timer(entry, t, timer);
+	unsigned long jiffies_now = jiffies;
+	int delay_timer;
+
+	delay_timer = lg4ff_timer(entry);
+
+	if (delay_timer) {
+		mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(delay_timer));
+		return;
+	}
+
 	if (entry->effects_used) {
 		mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(timer_msecs));
 		//DEBUG("Mod timer %lu.", jiffies_now + msecs_to_jiffies(timer_msecs));
@@ -755,8 +778,32 @@ static void lg4ff_timer(struct timer_list *t)
 		DEBUG("Stop timer.");
 		del_timer(&entry->timer);
 	}
+}
 
-	//DEBUG("timer out %lu", jiffies);
+static enum hrtimer_restart lg4ff_timer_hires(struct hrtimer *t)
+{
+	struct lg4ff_device_entry *entry = container_of(t, struct lg4ff_device_entry, hrtimer);
+	int delay_timer;
+	int overruns;
+
+	delay_timer = lg4ff_timer(entry);
+
+	if (delay_timer) {
+		hrtimer_forward_now(&entry->hrtimer, ms_to_ktime(delay_timer));
+		return HRTIMER_RESTART;
+	}
+
+	if (entry->effects_used) {
+		overruns = hrtimer_forward_now(&entry->hrtimer, ms_to_ktime(timer_msecs));
+		overruns--;
+		if (overruns > 0) {
+			DEBUG("Overruns: %d", overruns);
+		}
+		return HRTIMER_RESTART;
+	} else {
+		DEBUG("Stop timer.");
+		return HRTIMER_NORESTART;
+	}
 }
 
 static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device *ff)
@@ -785,14 +832,9 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device 
 		lg4ff_update_slot(&entry->slots[i], &parameters);
 		lg4ff_send_cmd(entry, entry->slots[i].current_cmd);
 		entry->slots[i].cmd_op = 0x0c;
+		lg4ff_update_slot(&entry->slots[i], &parameters);
 		entry->slots[i].is_updated = 0;
 	}
-
-	entry->effects_used = 0;
-
-	spin_lock_init(&entry->timer_lock);
-
-	timer_setup(&entry->timer, lg4ff_timer, 0);
 }
 
 static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, struct ff_effect *old)
@@ -854,10 +896,12 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 			STOP_EFFECT(state);
 		} else {
 			entry->effects_used++;
-			if (!timer_pending(&entry->timer)) {
+			if (lowres_timer && !timer_pending(&entry->timer)) {
 				mod_timer(&entry->timer, jiffies + msecs_to_jiffies(timer_msecs));
-				DEBUG("Start timer %lu %lu.", jiffies, jiffies + msecs_to_jiffies(timer_msecs));
+			} else if (!lowres_timer && !hrtimer_active(&entry->hrtimer)) {
+				hrtimer_start(&entry->hrtimer, ms_to_ktime(timer_msecs), HRTIMER_MODE_REL);
 			}
+			DEBUG("Start timer.");
 		}
 		__set_bit(FF_EFFECT_STARTED, &state->flags);
 		state->start_at = now;
@@ -2014,10 +2058,21 @@ int lg4ff_init(struct hid_device *hid)
 
 	entry->hid = hid;
 
+	lg4ff_init_slots(entry, dev->ff);
+
+	entry->effects_used = 0;
 	entry->wdata.master_gain = 0xffff;
 	entry->wdata.gain = 0xffff;
 
-	lg4ff_init_slots(entry, dev->ff);
+	spin_lock_init(&entry->timer_lock);
+
+	if (lowres_timer) {
+		timer_msecs = jiffies_to_msecs(msecs_to_jiffies(timer_msecs));
+		timer_setup(&entry->timer, lg4ff_timer_lowres, 0);
+	} else {
+		hrtimer_init(&entry->hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		entry->hrtimer.function = lg4ff_timer_hires;
+	}
 
 #ifdef CONFIG_LEDS_CLASS
 	lg4ff_init_leds(hid, entry, i);
@@ -2025,7 +2080,11 @@ int lg4ff_init(struct hid_device *hid)
 
 	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (new)\n");
 
-	hid_info(hid, "HZ (jiffies) = %d, timer period = %d ms", HZ, jiffies_to_msecs(msecs_to_jiffies(timer_msecs)));
+	if (lowres_timer) {
+		hid_info(hid, "Lowres timer: HZ (jiffies) = %d, timer period = %d ms", HZ, timer_msecs);
+	} else {
+		hid_info(hid, "Hires timer: period = %d ms", timer_msecs);
+	}
 
 	return 0;
 
@@ -2049,7 +2108,11 @@ int lg4ff_deinit(struct hid_device *hid)
 	if (!entry)
 		goto out; /* Nothing more to do */
 
-	del_timer(&entry->timer);
+	if (lowres_timer) {
+		del_timer(&entry->timer);
+	} else {
+		hrtimer_cancel(&entry->hrtimer);
+	}
 
 	/* Multimode devices will have at least the "MODE_NATIVE" bit set */
 	if (entry->wdata.alternate_modes) {
