@@ -11,12 +11,12 @@ install:
 load:
 	rmmod hid-logitech 2> /dev/null || true
 	rmmod hid-logitech-new 2> /dev/null || true
-	modprobe hid-logitech-new
+	modprobe hid-logitech-new ${OPTIONS}
 
 load_debug:
 	rmmod hid-logitech 2> /dev/null || true
 	rmmod hid-logitech-new 2> /dev/null || true
-	modprobe hid-logitech-new dyndbg=+p
+	modprobe hid-logitech-new dyndbg=+p ${OPTIONS}
 
 unload:
 	rmmod hid-logitech-new
