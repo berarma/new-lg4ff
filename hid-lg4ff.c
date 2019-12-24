@@ -743,6 +743,11 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
 	parameters[0].level = (long)parameters[0].level * gain / 0xffff;
+	for (i = 1; i < 4; i++) {
+		parameters[i].k1 = (long)parameters[i].k1 * gain / 0xffff;
+		parameters[i].k2 = (long)parameters[i].k2 * gain / 0xffff;
+		parameters[i].clip = (long)parameters[i].clip * gain / 0xffff;
+	}
 
 	for (i = 0; i < 4; i++) {
 		slot = &entry->slots[i];
