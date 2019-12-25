@@ -2,8 +2,8 @@
 
 Experimental Logitech Force Feedback module for driving wheels
 
-This driver implements all possible FF effects for Logitech wheels, except the
-Logitech G920 that should already support them by hardware.
+This driver implements all possible FF effects for most Logitech wheels, except
+the Logitech G920 Driving Force that should already support them by hardware.
 
 ## Differences with the in-tree module
 
@@ -11,7 +11,9 @@ This module adds the following features:
 
  - Support for most effects (except inertia) defined in the Linux FF API.
  - Asynchronous operations with realtime handling of effects.
- - Rate limited data transfers to the device with some latency.
+ - Rate limited FF updates with best possible latency.
+ - SYSFS entries for gain and autocenter.
+ - Split user and application gain settings.
  - Combine accelerator and clutch.
 
 ## Requirements
@@ -73,23 +75,57 @@ module description):
 
 ```
 [347092.750524] logitech 0003:046D:C24F.000B: Force feedback support for Logitech Gaming Wheels (new)
-[347092.750525] logitech 0003:046D:C24F.000B: HZ (jiffies) = 250, timer period = 4
+[347092.750525] logitech 0003:046D:C24F.000B: Hires timer: period = 2 ms
 ```
 
 ## Options
 
-Use modinfo to query for available options.
+You can use `modinfo` to query for available options.
 
- - timer_msecs: Set the timer period. The timer is used to render and send
-   commands to the device. It affects the maximum latency and the maximum rate
-   for commands to be sent. Maximum 4 commands every timer period. It will be
-   rounded up to 4ms in kernels with 250HZ timer clock. It defaults to 4ms.
- - fixed_loop: Set fixed or fast loop. By default fast loop is used.
+New options available:
 
-Write '2' to the `combine_pedals` file to combine accelerator and clutch
-(change 0000:0000:0000.0000 in path as appropiate):
+ - timer_msecs: Set the timer period. The timer is used to update the FF
+   effects in the device. It changes the maximum latency and the maximum rate
+   at which commands are sent. Maximum 4 commands every timer period get sent.
+   When using the lowres timer it will be rounded to the nearest possible value
+   (1ms for 1000Hz or 4ms for 250Hz kernels). The default value is 2ms, less
+   will have no benefit and greater may add unrequired latency.
 
-`$ echo 2 > /sys/bus/hid/drivers/logitech/0000:0000:0000.0000/combine_pedals`
+ - fixed_loop: Set the firmware loop mode to fixed or fast. In fixed mode it
+   runs at about 500Hz. In fast mode it runs as fast as it can. The default is
+   fast loop to try to minimize latencies.
+
+ - timer_mode: Fixed (0), static (1) or dynamic (2). In fixed mode the timer
+   period will not change. In static mode the period will increase as needed.
+   In dynamic mode the timer period will be dynamic trying to maintain synch
+   with the device to minimize latencies (default).
+
+ - lowres_timer: Disabled by default. For compatibility testing, when set the
+   hires timer is disabled.
+
+## New SYSFS entries
+
+They are located in a special directory named after the driver, for example:
+
+`/sys/bus/hid/drivers/logitech/XXXX:XXXX:XXXX.XXXX/`
+
+Entries in this directory can be read and written using normal file commands to
+get and set property values.
+
+### combine_pedals
+
+This entry already existed. It has been extended, setting the value to 2
+combines the clutch and gas pedals in the same axis.
+
+### gain
+
+Get/set the global FF gain (0-65535). This property is independent of the gain set by
+applications using the Linux FF API.
+
+### autocenter
+
+Get/set the autocenter strength (0-65535). This property can be overwritten by
+applications using the Linux FF API.
 
 ## Contributing
 
