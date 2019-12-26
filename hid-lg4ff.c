@@ -1953,9 +1953,10 @@ int lg4ff_init(struct hid_device *hid)
 	/* Wheel has been told to switch to native mode. There is no point in going on
 	 * with the initialization as the wheel will do a USB reset when it switches mode
 	 */
-	if (mmode_ret == LG4FF_MMODE_SWITCHED)
-		return 0;
-	else if (mmode_ret < 0) {
+	if (mmode_ret == LG4FF_MMODE_SWITCHED) {
+		error = 0;
+		goto err_init;
+	} else if (mmode_ret < 0) {
 		hid_err(hid, "Unable to switch device mode during initialization, errno %d\n", mmode_ret);
 		error = mmode_ret;
 		goto err_init;
