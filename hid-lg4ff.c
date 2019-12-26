@@ -2101,6 +2101,8 @@ err_init:
 
 int lg4ff_deinit(struct hid_device *hid)
 {
+	struct hid_input *hidinput = list_entry(hid->inputs.next, struct hid_input, list);
+	struct input_dev *dev = hidinput->input;
 	struct lg4ff_device_entry *entry;
 	struct lg_drv_data *drv_data;
 
@@ -2112,6 +2114,8 @@ int lg4ff_deinit(struct hid_device *hid)
 	entry = drv_data->device_props;
 	if (!entry)
 		goto out; /* Nothing more to do */
+
+	dev->open = entry->input_dev_open;
 
 	if (lowres_timer) {
 		del_timer(&entry->timer);
