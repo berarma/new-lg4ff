@@ -22,6 +22,8 @@
 #include "hid-lg4ff.h"
 #include "hid-ids.h"
 
+#define LG4FF_VERSION "0.2b"
+
 #define LG4FF_MMODE_IS_MULTIMODE 0
 #define LG4FF_MMODE_SWITCHED 1
 #define LG4FF_MMODE_NOT_MULTIMODE 2
@@ -2084,7 +2086,7 @@ int lg4ff_init(struct hid_device *hid)
 	lg4ff_init_leds(hid, entry, i);
 #endif
 
-	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (new)\n");
+	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (%s)\n", LG4FF_VERSION);
 
 	if (lowres_timer) {
 		hid_info(hid, "Lowres timer: HZ (jiffies) = %d, timer period = %d ms", HZ, timer_msecs);
