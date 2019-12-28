@@ -35,16 +35,28 @@ method delete the module by hand:
 
 ### DKMS
 
-This installs the module to the system `src` directory and allows the module to
-be rebuilt any time the kernel updates.
+The module will be installed in the `/usr/src` directory. Removal, updates, and
+rebuilds for kernel upgrades will be managed by `dkms`. The module will load
+automatically at system reboot.
 
-From your package manager of choice, install the package providing the `dkms` command.
+Follow these steps:
 
-Download the project to `/usr/src/new-lg4ff`.
+ - Install `dkms` from the package manager in your system.
 
-Run the command:
+ - Download the project to `/usr/src/new-lg4ff`.
+
+ - Install the module:
 
 `$ sudo dkms install /usr/src/new-lg4ff`
+
+When updating the module, update the code in `/usr/src/new-lg4ff` and repeat
+the install step.
+
+In case you want to rebuild the module, remove it and install again:
+
+IMPORTANT: When using DKMS the module will be installed as `hid-logitech` so it
+gets to automatically replace the old module. Once loaded, it will stil show as
+`hid-logitech-new` though.
 
 ### Manual method
 
