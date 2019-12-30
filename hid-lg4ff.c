@@ -370,6 +370,10 @@ static int lowres_timer = 0;
 module_param(lowres_timer, int, 0);
 MODULE_PARM_DESC(lowres_timer, "Use low res timers.");
 
+static int profile = 0;
+module_param(profile, int, 0660);
+MODULE_PARM_DESC(profile, "Enable profile debug messages.");
+
 static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 {
 	struct lg_drv_data *drv_data;
@@ -405,7 +409,8 @@ void lg4ff_send_cmd(struct lg4ff_device_entry *entry, u8 *cmd)
 	value[6] = cmd[6];
 	hid_hw_request(entry->hid, entry->report, HID_REQ_SET_REPORT);
 	spin_unlock_irqrestore(&entry->report_lock, flags);
-	DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
+	if (unlikely(profile))
+		DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
 void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
@@ -678,8 +683,6 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 		return current_period;
 	}
 
-	DEBUG("timer in.");
-
 	memset(parameters, 0, sizeof(parameters));
 
 	gain = (unsigned long)entry->wdata.master_gain * entry->wdata.gain / 0xffff;
@@ -760,7 +763,8 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 		}
 	}
 
-	DEBUG("timer out.");
+	if (unlikely(profile))
+		DEBUG("timer out.");
 
 	return 0;
 }
@@ -780,10 +784,10 @@ static void lg4ff_timer_lowres(struct timer_list *t)
 
 	if (entry->effects_used) {
 		mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(timer_msecs));
-		//DEBUG("Mod timer %lu.", jiffies_now + msecs_to_jiffies(timer_msecs));
 	} else {
-		DEBUG("Stop timer.");
 		del_timer(&entry->timer);
+		if (unlikely(profile))
+			DEBUG("Stop timer.");
 	}
 }
 
@@ -803,12 +807,12 @@ static enum hrtimer_restart lg4ff_timer_hires(struct hrtimer *t)
 	if (entry->effects_used) {
 		overruns = hrtimer_forward_now(&entry->hrtimer, ms_to_ktime(timer_msecs));
 		overruns--;
-		if (overruns > 0) {
+		if (unlikely(profile && overruns > 0))
 			DEBUG("Overruns: %d", overruns);
-		}
 		return HRTIMER_RESTART;
 	} else {
-		DEBUG("Stop timer.");
+		if (unlikely(profile))
+			DEBUG("Stop timer.");
 		return HRTIMER_NORESTART;
 	}
 }
@@ -905,10 +909,13 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 			entry->effects_used++;
 			if (lowres_timer && !timer_pending(&entry->timer)) {
 				mod_timer(&entry->timer, jiffies + msecs_to_jiffies(timer_msecs));
+				if (unlikely(profile))
+					DEBUG("Start timer.");
 			} else if (!lowres_timer && !hrtimer_active(&entry->hrtimer)) {
 				hrtimer_start(&entry->hrtimer, ms_to_ktime(timer_msecs), HRTIMER_MODE_REL);
+				if (unlikely(profile))
+					DEBUG("Start timer.");
 			}
-			DEBUG("Start timer.");
 		}
 		__set_bit(FF_EFFECT_STARTED, &state->flags);
 		state->start_at = now;
