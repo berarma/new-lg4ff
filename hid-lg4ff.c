@@ -112,7 +112,7 @@ struct lg4ff_effect_parameters {
 struct lg4ff_slot {
 	int id;
 	struct lg4ff_effect_parameters parameters;
-	__u8 current_cmd[7];
+	u8 current_cmd[7];
 	int cmd_op;
 	int is_updated;
 	int effect_type;
@@ -390,7 +390,7 @@ static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 	return entry;
 }
 
-void lg4ff_send_cmd(struct lg4ff_device_entry *entry, __u8 *cmd)
+void lg4ff_send_cmd(struct lg4ff_device_entry *entry, u8 *cmd)
 {
 	unsigned long flags;
 	s32 *value = entry->report->field[0]->value;
@@ -410,7 +410,7 @@ void lg4ff_send_cmd(struct lg4ff_device_entry *entry, __u8 *cmd)
 
 void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
 {
-	__u8 original_cmd[7];
+	u8 original_cmd[7];
 	int d1;
 	int d2;
 	int s1;
@@ -816,7 +816,7 @@ static enum hrtimer_restart lg4ff_timer_hires(struct hrtimer *t)
 static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device *ff)
 {
 	struct lg4ff_effect_parameters parameters;
-	__u8 cmd[8] = {0};
+	u8 cmd[8] = {0};
 	int i;
 
 	// Set/unset fixed loop mode
@@ -1079,10 +1079,9 @@ static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const s
 static void lg4ff_set_autocenter_default(struct input_dev *dev, u16 magnitude)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
-	s32 *value;
+	u8 cmd[7];
 	u32 expand_a, expand_b;
 	struct lg4ff_device_entry *entry;
-	unsigned long flags;
 
 	entry = lg4ff_get_device_entry(hid);
 	if (entry == NULL) {
@@ -1091,21 +1090,16 @@ static void lg4ff_set_autocenter_default(struct input_dev *dev, u16 magnitude)
 
 	entry->wdata.autocenter = magnitude;
 
-	value = entry->report->field[0]->value;
-
 	/* De-activate Auto-Center */
-	spin_lock_irqsave(&entry->report_lock, flags);
 	if (magnitude == 0) {
-		value[0] = 0xf5;
-		value[1] = 0x00;
-		value[2] = 0x00;
-		value[3] = 0x00;
-		value[4] = 0x00;
-		value[5] = 0x00;
-		value[6] = 0x00;
-
-		hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-		spin_unlock_irqrestore(&entry->report_lock, flags);
+		cmd[0] = 0xf5;
+		cmd[1] = 0x00;
+		cmd[2] = 0x00;
+		cmd[3] = 0x00;
+		cmd[4] = 0x00;
+		cmd[5] = 0x00;
+		cmd[6] = 0x00;
+		lg4ff_send_cmd(entry, cmd);
 		return;
 	}
 
@@ -1127,27 +1121,24 @@ static void lg4ff_set_autocenter_default(struct input_dev *dev, u16 magnitude)
 		break;
 	}
 
-	value[0] = 0xfe;
-	value[1] = 0x0d;
-	value[2] = expand_a / 0xaaaa;
-	value[3] = expand_a / 0xaaaa;
-	value[4] = expand_b / 0xaaaa;
-	value[5] = 0x00;
-	value[6] = 0x00;
-
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
+	cmd[0] = 0xfe;
+	cmd[1] = 0x0d;
+	cmd[2] = expand_a / 0xaaaa;
+	cmd[3] = expand_a / 0xaaaa;
+	cmd[4] = expand_b / 0xaaaa;
+	cmd[5] = 0x00;
+	cmd[6] = 0x00;
+	lg4ff_send_cmd(entry, cmd);
 
 	/* Activate Auto-Center */
-	value[0] = 0x14;
-	value[1] = 0x00;
-	value[2] = 0x00;
-	value[3] = 0x00;
-	value[4] = 0x00;
-	value[5] = 0x00;
-	value[6] = 0x00;
-
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-	spin_unlock_irqrestore(&entry->report_lock, flags);
+	cmd[0] = 0x14;
+	cmd[1] = 0x00;
+	cmd[2] = 0x00;
+	cmd[3] = 0x00;
+	cmd[4] = 0x00;
+	cmd[5] = 0x00;
+	cmd[6] = 0x00;
+	lg4ff_send_cmd(entry, cmd);
 }
 
 /* Sends autocentering command compatible with Formula Force EX */
@@ -1155,8 +1146,7 @@ static void lg4ff_set_autocenter_ffex(struct input_dev *dev, u16 magnitude)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
 	struct lg4ff_device_entry *entry;
-	unsigned long flags;
-	s32 *value;
+	u8 cmd[7];
 
 	entry = lg4ff_get_device_entry(hid);
 	if (entry == NULL) {
@@ -1165,21 +1155,16 @@ static void lg4ff_set_autocenter_ffex(struct input_dev *dev, u16 magnitude)
 
 	entry->wdata.autocenter = magnitude;
 
-	value = entry->report->field[0]->value;
-
 	magnitude = magnitude * 90 / 65535;
 
-	spin_lock_irqsave(&entry->report_lock, flags);
-	value[0] = 0xfe;
-	value[1] = 0x03;
-	value[2] = magnitude >> 14;
-	value[3] = magnitude >> 14;
-	value[4] = magnitude;
-	value[5] = 0x00;
-	value[6] = 0x00;
-
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-	spin_unlock_irqrestore(&entry->report_lock, flags);
+	cmd[0] = 0xfe;
+	cmd[1] = 0x03;
+	cmd[2] = magnitude >> 14;
+	cmd[3] = magnitude >> 14;
+	cmd[4] = magnitude;
+	cmd[5] = 0x00;
+	cmd[6] = 0x00;
+	lg4ff_send_cmd(entry, cmd);
 }
 
 /* Sends command to set range compatible with G25/G27/Driving Force GT */
@@ -1187,26 +1172,21 @@ static void lg4ff_set_range_g25(struct hid_device *hid, u16 range)
 {
 	struct lg4ff_device_entry *entry;
 	struct lg_drv_data *drv_data;
-	unsigned long flags;
-	s32 *value;
+	u8 cmd[7];
 
 	drv_data = hid_get_drvdata(hid);
 	entry = drv_data->device_props;
-	value = entry->report->field[0]->value;
 
 	dbg_hid("G25/G27/DFGT: setting range to %u\n", range);
 
-	spin_lock_irqsave(&entry->report_lock, flags);
-	value[0] = 0xf8;
-	value[1] = 0x81;
-	value[2] = range & 0x00ff;
-	value[3] = (range & 0xff00) >> 8;
-	value[4] = 0x00;
-	value[5] = 0x00;
-	value[6] = 0x00;
-
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-	spin_unlock_irqrestore(&entry->report_lock, flags);
+	cmd[0] = 0xf8;
+	cmd[1] = 0x81;
+	cmd[2] = range & 0x00ff;
+	cmd[3] = (range & 0xff00) >> 8;
+	cmd[4] = 0x00;
+	cmd[5] = 0x00;
+	cmd[6] = 0x00;
+	lg4ff_send_cmd(entry, cmd);
 }
 
 /* Sends commands to set range compatible with Driving Force Pro wheel */
@@ -1214,47 +1194,43 @@ static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range)
 {
 	struct lg4ff_device_entry *entry;
 	struct lg_drv_data *drv_data;
-	unsigned long flags;
 	int start_left, start_right, full_range;
-	s32 *value;
+	u8 cmd[7];
 
 	drv_data = hid_get_drvdata(hid);
 	entry = drv_data->device_props;
-	value = entry->report->field[0]->value;
 
 	dbg_hid("Driving Force Pro: setting range to %u\n", range);
 
 	/* Prepare "coarse" limit command */
-	spin_lock_irqsave(&entry->report_lock, flags);
-	value[0] = 0xf8;
-	value[1] = 0x00;	/* Set later */
-	value[2] = 0x00;
-	value[3] = 0x00;
-	value[4] = 0x00;
-	value[5] = 0x00;
-	value[6] = 0x00;
+	cmd[0] = 0xf8;
+	cmd[1] = 0x00;	/* Set later */
+	cmd[2] = 0x00;
+	cmd[3] = 0x00;
+	cmd[4] = 0x00;
+	cmd[5] = 0x00;
+	cmd[6] = 0x00;
 
 	if (range > 200) {
-		value[1] = 0x03;
+		cmd[1] = 0x03;
 		full_range = 900;
 	} else {
-		value[1] = 0x02;
+		cmd[1] = 0x02;
 		full_range = 200;
 	}
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
+	lg4ff_send_cmd(entry, cmd);
 
 	/* Prepare "fine" limit command */
-	value[0] = 0x81;
-	value[1] = 0x0b;
-	value[2] = 0x00;
-	value[3] = 0x00;
-	value[4] = 0x00;
-	value[5] = 0x00;
-	value[6] = 0x00;
+	cmd[0] = 0x81;
+	cmd[1] = 0x0b;
+	cmd[2] = 0x00;
+	cmd[3] = 0x00;
+	cmd[4] = 0x00;
+	cmd[5] = 0x00;
+	cmd[6] = 0x00;
 
 	if (range == 200 || range == 900) {	/* Do not apply any fine limit */
-		hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-		spin_unlock_irqrestore(&entry->report_lock, flags);
+		lg4ff_send_cmd(entry, cmd);
 		return;
 	}
 
@@ -1262,14 +1238,12 @@ static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range)
 	start_left = (((full_range - range + 1) * 2047) / full_range);
 	start_right = 0xfff - start_left;
 
-	value[2] = start_left >> 4;
-	value[3] = start_right >> 4;
-	value[4] = 0xff;
-	value[5] = (start_right & 0xe) << 4 | (start_left & 0xe);
-	value[6] = 0xff;
-
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-	spin_unlock_irqrestore(&entry->report_lock, flags);
+	cmd[2] = start_left >> 4;
+	cmd[3] = start_right >> 4;
+	cmd[4] = 0xff;
+	cmd[5] = (start_right & 0xe) << 4 | (start_left & 0xe);
+	cmd[6] = 0xff;
+	lg4ff_send_cmd(entry, cmd);
 }
 
 static void lg4ff_set_gain(struct input_dev *dev, u16 gain)
@@ -1362,26 +1336,22 @@ static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(cons
 static int lg4ff_switch_compatibility_mode(struct hid_device *hid, const struct lg4ff_compat_mode_switch *s)
 {
 	struct lg4ff_device_entry *entry;
-	unsigned long flags;
-	s32 *value;
+	u8 cmd[7];
 	u8 i;
 
 	entry = lg4ff_get_device_entry(hid);
 	if (entry == NULL) {
 		return -EINVAL;
 	}
-	value = entry->report->field[0]->value;
 
-	spin_lock_irqsave(&entry->report_lock, flags);
 	for (i = 0; i < s->cmd_count; i++) {
 		u8 j;
 
 		for (j = 0; j < 7; j++)
-			value[j] = s->cmd[j + (7*i)];
+			cmd[j] = s->cmd[j + (7*i)];
 
-		hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
+		lg4ff_send_cmd(entry, cmd);
 	}
-	spin_unlock_irqrestore(&entry->report_lock, flags);
 	hid_hw_wait(hid);
 	return 0;
 }
@@ -1695,26 +1665,21 @@ static DEVICE_ATTR(autocenter, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, 
 static void lg4ff_set_leds(struct hid_device *hid, u8 leds)
 {
 	struct lg4ff_device_entry *entry;
-	unsigned long flags;
-	s32 *value;
+	u8 cmd[7];
 
 	entry = lg4ff_get_device_entry(hid);
 	if (entry == NULL) {
 		return;
 	}
 
-	value = entry->report->field[0]->value;
-
-	spin_lock_irqsave(&entry->report_lock, flags);
-	value[0] = 0xf8;
-	value[1] = 0x12;
-	value[2] = leds;
-	value[3] = 0x00;
-	value[4] = 0x00;
-	value[5] = 0x00;
-	value[6] = 0x00;
-	hid_hw_request(hid, entry->report, HID_REQ_SET_REPORT);
-	spin_unlock_irqrestore(&entry->report_lock, flags);
+	cmd[0] = 0xf8;
+	cmd[1] = 0x12;
+	cmd[2] = leds;
+	cmd[3] = 0x00;
+	cmd[4] = 0x00;
+	cmd[5] = 0x00;
+	cmd[6] = 0x00;
+	lg4ff_send_cmd(entry, cmd);
 }
 
 static void lg4ff_led_set_brightness(struct led_classdev *led_cdev,
@@ -1944,7 +1909,9 @@ int lg4ff_init(struct hid_device *hid)
 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
+
 	spin_lock_init(&entry->report_lock);
+	entry->hid = hid;
 	entry->report = report;
 	drv_data->device_props = entry;
 
@@ -2063,8 +2030,6 @@ int lg4ff_init(struct hid_device *hid)
 	entry->wdata.range = entry->wdata.max_range;
 	if (entry->wdata.set_range)
 		entry->wdata.set_range(hid, entry->wdata.range);
-
-	entry->hid = hid;
 
 	lg4ff_init_slots(entry, dev->ff);
 
