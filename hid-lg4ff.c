@@ -69,6 +69,7 @@
 #define CLAMP_VALUE_U16(x) ((unsigned short)((x) > 0xffff ? 0xffff : (x)))
 #define CLAMP_VALUE_S16(x) ((unsigned short)((x) <= -0x8000 ? -0x8000 : ((x) > 0x7fff ? 0x7fff : (x))))
 #define SCALE_VALUE_U16(x, bits) (CLAMP_VALUE_U16(x) >> (16 - bits))
+#define SCALE_COEFF(x, bits) SCALE_VALUE_U16(abs(x) * 2, bits)
 #define TRANSLATE_FORCE(x) ((CLAMP_VALUE_S16(x) + 0x8000) >> 8)
 #define STOP_EFFECT(state) ((state)->flags = 0)
 #define JIFFIES2MS(jiffies) ((jiffies) * 1000 / HZ)
@@ -441,7 +442,7 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 			slot->current_cmd[1] = 0x0b;
 			slot->current_cmd[2] = d1 >> 3;
 			slot->current_cmd[3] = d2 >> 3;
-			slot->current_cmd[4] = (SCALE_VALUE_U16(abs(parameters->k2), 4) << 4) + SCALE_VALUE_U16(abs(parameters->k1), 4);
+			slot->current_cmd[4] = (SCALE_COEFF(parameters->k2, 4) << 4) + SCALE_COEFF(parameters->k1, 4);
 			slot->current_cmd[5] = ((d2 & 7) << 5) + ((d1 & 7) << 1) + (s2 << 4) + s1;
 			slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
 			break;
@@ -449,9 +450,9 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 			s1 = parameters->k1 < 0;
 			s2 = parameters->k2 < 0;
 			slot->current_cmd[1] = 0x0c;
-			slot->current_cmd[2] = SCALE_VALUE_U16(abs(parameters->k1), 4);
+			slot->current_cmd[2] = SCALE_COEFF(parameters->k1, 4);
 			slot->current_cmd[3] = s1;
-			slot->current_cmd[4] = SCALE_VALUE_U16(abs(parameters->k2), 4);
+			slot->current_cmd[4] = SCALE_COEFF(parameters->k2, 4);
 			slot->current_cmd[5] = s2;
 			slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
 			break;
@@ -459,8 +460,8 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 			s1 = parameters->k1 < 0;
 			s2 = parameters->k2 < 0;
 			slot->current_cmd[1] = 0x0e;
-			slot->current_cmd[2] = SCALE_VALUE_U16(abs(parameters->k1) * 2, 8);
-			slot->current_cmd[3] = SCALE_VALUE_U16(abs(parameters->k2) * 2, 8);
+			slot->current_cmd[2] = SCALE_COEFF(parameters->k1, 8);
+			slot->current_cmd[3] = SCALE_COEFF(parameters->k2, 8);
 			slot->current_cmd[4] = SCALE_VALUE_U16(parameters->clip, 8);
 			slot->current_cmd[5] = (s2 << 4) + s1;
 			slot->current_cmd[6] = 0;
