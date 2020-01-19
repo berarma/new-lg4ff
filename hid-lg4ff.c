@@ -152,6 +152,10 @@ struct lg4ff_device_entry {
 	struct lg4ff_slot slots[4];
 	struct lg4ff_effect_state states[LG4FF_MAX_EFFECTS];
 	int effects_used;
+	unsigned long peak_ffb_level;
+#ifdef CONFIG_LEDS_CLASS
+	int has_leds;
+#endif
 };
 
 static const signed short lg4ff_wheel_effects[] = {
@@ -209,6 +213,9 @@ struct lg4ff_alternate_mode {
 
 static void lg4ff_set_range_dfp(struct hid_device *hid, u16 range);
 static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
+#ifdef CONFIG_LEDS_CLASS
+static void lg4ff_set_leds(struct hid_device *hid, u8 leds);
+#endif
 
 static const struct lg4ff_wheel lg4ff_devices[] = {
 	{USB_DEVICE_ID_LOGITECH_WINGMAN_FG,  no_wheel_effects,    40, 180, NULL},
@@ -374,6 +381,24 @@ MODULE_PARM_DESC(lowres_timer, "Use low res timers.");
 static int profile = 0;
 module_param(profile, int, 0660);
 MODULE_PARM_DESC(profile, "Enable profile debug messages.");
+
+#ifdef CONFIG_LEDS_CLASS
+static int ffb_leds = 0;
+module_param(ffb_leds, int, 0);
+MODULE_PARM_DESC(ffb_leds, "Use leds to display FFB levels for calibration.");
+#endif
+
+static int spring_level = 30;
+module_param(spring_level, int, 0);
+MODULE_PARM_DESC(spring_level, "Level of spring force (0-100).");
+
+static int damper_level = 30;
+module_param(damper_level, int, 0);
+MODULE_PARM_DESC(damper_level, "Level of damper force (0-100).");
+
+static int friction_level = 30;
+module_param(friction_level, int, 0);
+MODULE_PARM_DESC(friction_level, "Level of friction force (0-100).");
 
 static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 {
@@ -672,6 +697,12 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 	int count;
 	int effect_id;
 	int i;
+	int ffb_level;
+#ifdef CONFIG_LEDS_CLASS
+	static int leds_timer = 0;
+	static int leds_level = 0;
+	u8 led_states;
+#endif
 
 	if (timer_mode > 0 && usbhid->outhead != usbhid->outtail) {
 		current_period = timer_msecs;
@@ -749,10 +780,19 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
 	parameters[0].level = (long)parameters[0].level * gain / 0xffff;
+	parameters[1].clip = (long)parameters[1].clip * spring_level / 100;
+	parameters[2].clip = (long)parameters[2].clip * damper_level / 100;
+	parameters[3].clip = (long)parameters[3].clip * friction_level / 100;
+
+	ffb_level = abs(parameters[0].level);
 	for (i = 1; i < 4; i++) {
 		parameters[i].k1 = (long)parameters[i].k1 * gain / 0xffff;
 		parameters[i].k2 = (long)parameters[i].k2 * gain / 0xffff;
 		parameters[i].clip = (long)parameters[i].clip * gain / 0xffff;
+		ffb_level += parameters[i].clip * 0x7fff / 0xffff;
+	}
+	if (ffb_level > entry->peak_ffb_level) {
+		entry->peak_ffb_level = ffb_level;
 	}
 
 	for (i = 0; i < 4; i++) {
@@ -764,8 +804,44 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 		}
 	}
 
-	if (unlikely(profile))
-		DEBUG("timer out.");
+#ifdef CONFIG_LEDS_CLASS
+	if (ffb_leds || leds_level > 0) {
+		if (ffb_level > leds_level) {
+			leds_level = ffb_level;
+		}
+		if (!ffb_leds || entry->effects_used == 0) {
+			leds_timer = 0;
+			leds_level = 0;
+		}
+		if (leds_timer == 0) {
+			leds_timer = 480 / timer_msecs;
+			if (leds_level < 2458) { // < 7.5%
+				led_states = 0;
+			} else if (leds_level < 8192) { // < 25%
+				led_states = 1;
+			} else if (leds_level < 16384) { // < 50%
+				led_states = 3;
+			} else if (leds_level < 24576) { // < 75%
+				led_states = 7;
+			} else if (leds_level < 29491) { // < 90%
+				led_states = 15;
+			} else if (leds_level <= 32768) { // <= 100%
+				led_states = 31;
+			} else if (leds_level < 36045) { // < 110%
+				led_states = 30;
+			} else if (leds_level < 40960) { // < 125%
+				led_states = 28;
+			} else if (leds_level < 49152) { // < 150%
+				led_states = 24;
+			} else {
+				led_states = 16;
+			}
+			lg4ff_set_leds(entry->hid, led_states);
+			leds_level = 0;
+		}
+		leds_timer--;
+	}
+#endif
 
 	return 0;
 }
@@ -1669,7 +1745,139 @@ static ssize_t lg4ff_autocenter_store(struct device *dev, struct device_attribut
 }
 static DEVICE_ATTR(autocenter, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_autocenter_show, lg4ff_autocenter_store);
 
+static ssize_t lg4ff_spring_level_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	size_t count;
+
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", spring_level);
+
+	return count;
+}
+
+static ssize_t lg4ff_spring_level_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	unsigned value = simple_strtoul(buf, NULL, 10);
+
+	if (value > 100) {
+		value = 100;
+	}
+
+	spring_level = value;
+
+	return count;
+}
+static DEVICE_ATTR(spring_level, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_spring_level_show, lg4ff_spring_level_store);
+
+static ssize_t lg4ff_damper_level_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	size_t count;
+
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", damper_level);
+
+	return count;
+}
+
+static ssize_t lg4ff_damper_level_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	unsigned value = simple_strtoul(buf, NULL, 10);
+
+	if (value > 100) {
+		value = 100;
+	}
+
+	damper_level = value;
+
+	return count;
+}
+static DEVICE_ATTR(damper_level, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_damper_level_show, lg4ff_damper_level_store);
+
+static ssize_t lg4ff_friction_level_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	size_t count;
+
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", friction_level);
+
+	return count;
+}
+
+static ssize_t lg4ff_friction_level_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	unsigned value = simple_strtoul(buf, NULL, 10);
+
+	if (value > 100) {
+		value = 100;
+	}
+
+	friction_level = value;
+
+	return count;
+}
+static DEVICE_ATTR(friction_level, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_friction_level_show, lg4ff_friction_level_store);
+
 #ifdef CONFIG_LEDS_CLASS
+
+static ssize_t lg4ff_peak_ffb_level_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	size_t count;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	count = scnprintf(buf, PAGE_SIZE, "%lu\n", entry->peak_ffb_level);
+
+	return count;
+}
+
+static ssize_t lg4ff_peak_ffb_level_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	unsigned long value = simple_strtoul(buf, NULL, 10);
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	entry->peak_ffb_level = value;
+
+	return count;
+}
+static DEVICE_ATTR(peak_ffb_level, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_peak_ffb_level_show, lg4ff_peak_ffb_level_store);
+
+static ssize_t lg4ff_ffb_leds_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	size_t count;
+
+	count = scnprintf(buf, PAGE_SIZE, "%d\n", ffb_leds);
+
+	return count;
+}
+
+static ssize_t lg4ff_ffb_leds_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	unsigned long value = simple_strtoul(buf, NULL, 10);
+
+	ffb_leds = value;
+
+	return count;
+}
+static DEVICE_ATTR(ffb_leds, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_ffb_leds_show, lg4ff_ffb_leds_store);
+
 static void lg4ff_set_leds(struct hid_device *hid, u8 leds)
 {
 	struct lg4ff_device_entry *entry;
@@ -1709,10 +1917,14 @@ static void lg4ff_led_set_brightness(struct led_classdev *led_cdev,
 		state = (entry->wdata.led_state >> i) & 1;
 		if (value == LED_OFF && state) {
 			entry->wdata.led_state &= ~(1 << i);
-			lg4ff_set_leds(hid, entry->wdata.led_state);
+			if (!ffb_leds) {
+				lg4ff_set_leds(hid, entry->wdata.led_state);
+			}
 		} else if (value != LED_OFF && !state) {
 			entry->wdata.led_state |= 1 << i;
-			lg4ff_set_leds(hid, entry->wdata.led_state);
+			if (!ffb_leds) {
+				lg4ff_set_leds(hid, entry->wdata.led_state);
+			}
 		}
 		break;
 	}
@@ -1748,8 +1960,7 @@ static void lg4ff_init_leds(struct hid_device *hid, struct lg4ff_device_entry *e
 	for (j = 0; j < 5; j++)
 		entry->wdata.led[j] = NULL;
 
-	if (lg4ff_devices[i].product_id == USB_DEVICE_ID_LOGITECH_G27_WHEEL ||
-			lg4ff_devices[i].product_id == USB_DEVICE_ID_LOGITECH_G29_WHEEL) {
+	{
 		struct led_classdev *led;
 		size_t name_sz;
 		char *name;
@@ -2032,6 +2243,26 @@ int lg4ff_init(struct hid_device *hid)
 	if (error)
 		hid_warn(hid, "Unable to create sysfs interface for \"autocenter\", errno %d\n", error);
 
+	error = device_create_file(&hid->dev, &dev_attr_peak_ffb_level);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"peak_ffb_level\", errno %d\n", error);
+
+	error = device_create_file(&hid->dev, &dev_attr_spring_level);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"spring_level\", errno %d\n", error);
+
+	error = device_create_file(&hid->dev, &dev_attr_damper_level);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"damper_level\", errno %d\n", error);
+
+	error = device_create_file(&hid->dev, &dev_attr_friction_level);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"friction_level\", errno %d\n", error);
+
+	error = device_create_file(&hid->dev, &dev_attr_ffb_leds);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"ffb_leds\", errno %d\n", error);
+
 	dbg_hid("sysfs interface created\n");
 
 	/* Set the maximum range to start with */
@@ -2056,7 +2287,13 @@ int lg4ff_init(struct hid_device *hid)
 	}
 
 #ifdef CONFIG_LEDS_CLASS
-	lg4ff_init_leds(hid, entry, i);
+	if (lg4ff_devices[i].product_id == USB_DEVICE_ID_LOGITECH_G27_WHEEL ||
+			lg4ff_devices[i].product_id == USB_DEVICE_ID_LOGITECH_G29_WHEEL) {
+		entry->has_leds = 1;
+		lg4ff_init_leds(hid, entry, i);
+	} else {
+		ffb_leds = 0;
+	}
 #endif
 
 	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (%s)\n", LG4FF_VERSION);
@@ -2109,8 +2346,14 @@ int lg4ff_deinit(struct hid_device *hid)
 	device_remove_file(&hid->dev, &dev_attr_range);
 	device_remove_file(&hid->dev, &dev_attr_gain);
 	device_remove_file(&hid->dev, &dev_attr_autocenter);
+	device_remove_file(&hid->dev, &dev_attr_peak_ffb_level);
+	device_remove_file(&hid->dev, &dev_attr_spring_level);
+	device_remove_file(&hid->dev, &dev_attr_damper_level);
+	device_remove_file(&hid->dev, &dev_attr_friction_level);
+	device_remove_file(&hid->dev, &dev_attr_ffb_leds);
+
 #ifdef CONFIG_LEDS_CLASS
-	{
+	if (entry->has_leds) {
 		int j;
 		struct led_classdev *led;
 
