@@ -73,6 +73,8 @@
 #define TRANSLATE_FORCE(x) ((CLAMP_VALUE_S16(x) + 0x8000) >> 8)
 #define STOP_EFFECT(state) ((state)->flags = 0)
 #define JIFFIES2MS(jiffies) ((jiffies) * 1000 / HZ)
+#undef fixp_sin16
+#define fixp_sin16(v) (((v % 360) > 180)? -(fixp_sin32((v % 360) - 180) >> 16) : fixp_sin32(v) >> 16)
 
 #define DEFAULT_TIMER_PERIOD 2
 #define LG4FF_MAX_EFFECTS 16
@@ -639,7 +641,7 @@ static __always_inline void lg4ff_update_state(struct lg4ff_effect_state *state,
 		if (!test_bit(FF_EFFECT_UPDATING, &state->flags)) {
 			state->updated_at = state->play_at;
 		}
-		state->direction_gain = fixp_sin16(effect->direction * 360 / 0xffff);
+		state->direction_gain = fixp_sin16(effect->direction * 360 / 0x10000);
 		if (effect->type == FF_PERIODIC) {
 			state->phase_adj = effect->u.periodic.phase * 360 / effect->u.periodic.period;
 		}
@@ -651,7 +653,7 @@ static __always_inline void lg4ff_update_state(struct lg4ff_effect_state *state,
 	if (__test_and_clear_bit(FF_EFFECT_UPDATING, &state->flags)) {
 		__clear_bit(FF_EFFECT_PLAYING, &state->flags);
 		state->play_at = state->start_at + effect->replay.delay;
-		state->direction_gain = fixp_sin16(effect->direction * 360 / 0xffff);
+		state->direction_gain = fixp_sin16(effect->direction * 360 / 0x10000);
 		if (effect->replay.length) {
 			state->stop_at = state->play_at + effect->replay.length;
 		}
