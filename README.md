@@ -2,36 +2,36 @@
 
 Experimental Logitech Force Feedback module for driving wheels
 
-This driver implements all possible FF effects for most Logitech wheels, except
-the Logitech G920 Driving Force that should already support them by hardware.
+This module is not compatible with the Logitech G920 Driving Force that already
+has full effects support implemented by firmware and uses the HID++ driver.
 
 ## Differences with the in-tree module
 
-This module adds the following features:
+It has all the features in the in-kernel `hid-logitech` module and adds the
+following ones:
 
- - Support for most effects (except inertia) defined in the Linux FF API.
+ - Support for most effects defined in the Linux FF API (except inertia).
  - Asynchronous operations with realtime handling of effects.
  - Rate limited FF updates with best possible latency.
- - SYSFS entries for gain and autocenter.
- - Split user and application gain settings.
+ - Tunable sprint, damper and friction effect types gain.
  - Combine accelerator and clutch.
+ - Use the wheel leds as a FFBmeter to monitor clipping.
+ - Added a system gain setting that modulates the gain setting used by
+   applications.
+ - SYSFS entries for gain, autocenter, spring/damper/friction effect gain and
+   FFBmeter.
 
 ## Requirements
 
- - GNU Make
+ - GMake
  - GCC
  - `linux-kbuild` and `linux-headers` packages matching the installed kernel
    version.
 
 ## Build and install
 
-The module can be installed with DKMS or manually. Follow just one of the
-following procedures.
-
-If you want to use DKMS but the module was previously installed with the manual
-method delete the module by hand:
-
-`$ sudo rm /lib/modules/$(uname -r)/extra/hid-logitech-new.ko`
+The module can be installed with DKMS or manually. Follow just one of these
+procedures.
 
 ### DKMS
 
@@ -54,11 +54,17 @@ the install step.
 
 In case you want to rebuild the module, remove it and install again:
 
-IMPORTANT: When using DKMS the module will be installed as `hid-logitech` so it
-gets to automatically replace the old module. Once loaded, it will stil show as
+When using DKMS the module will be installed as `hid-logitech` so it gets to
+automatically replace the old module. Once loaded, it will be displayed as
 `hid-logitech-new` though.
 
+NOTE: If you had previously installed the module using the manual method then
+you must delete the module by hand: `$ sudo rm /lib/modules/$(uname
+-r)/extra/hid-logitech-new.ko`
+
 ### Manual method
+
+Type the following commands inside the project directory:
 
 ```
 $ make
@@ -68,11 +74,13 @@ $ sudo make install
 In some distributions, the install step might throw some SSL errors because
 it's trying to sign the module. These errors can be ignored.
 
-Load the module:
+Now the module is installed but not loaded.
+
+To load the module:
 
 `$ sudo make load`
 
-Unload the module (restoring the in-kernel module):
+To unload the module (restoring the in-kernel module):
 
 `$ sudo make unload`
 
@@ -82,13 +90,33 @@ Run:
 
 `sudo dmesg`
 
-You should see something like this (notice the word 'new' at the end of the
-module description):
+You should see something like this (notice the version at the end of the module
+description):
 
 ```
-[347092.750524] logitech 0003:046D:C24F.000B: Force feedback support for Logitech Gaming Wheels (new)
+[347092.750524] logitech 0003:046D:C24F.000B: Force feedback support for Logitech Gaming Wheels (0.2b)
 [347092.750525] logitech 0003:046D:C24F.000B: Hires timer: period = 2 ms
 ```
+
+## Force Feedback clipping
+
+There's been work done to be able to monitor FF clipping and avoid it. The FF
+force level is calculated as a maximum since we can't know the exact amount of
+force the wheel is applying because conditional effects are dynamic depending
+on wheel movements.
+
+Games using conditional effects will report the maximum force level as if the
+conditional effects were playing at the maximum level. This way we may get a
+higher value than real one but never lower. Since the goal is to avoid
+clipping, this is the measure we are interested in.
+
+Conditional effects gain can be tuned seperately for each effect type to leave
+more dynamic range for the other effects. The default value seems close enough
+to the gain used in the official Logitech driver for Windows.
+
+Clipping isn't necesarily bad. To allow a wider dynamic range of forces to be
+played, it may be good to have some very light clipping, and even lots of
+clipping are acceptable when crashing or driving over very rough ground.
 
 ## Options
 
@@ -115,6 +143,16 @@ New options available:
  - lowres_timer: Disabled by default. For compatibility testing, when set the
    hires timer is disabled.
 
+ - profile: Enable debug messages when set to 1.
+
+ - spring_level: (see the corresponding SYSFS entry).
+
+ - damper_level: (see the corresponding SYSFS entry).
+
+ - friction_level: (see the corresponding SYSFS entry).
+
+ - ffb_leds: (see the corresponding SYSFS entry).
+
 ## New SYSFS entries
 
 They are located in a special directory named after the driver, for example:
@@ -138,6 +176,43 @@ applications using the Linux FF API.
 
 Get/set the autocenter strength (0-65535). This property can be overwritten by
 applications using the Linux FF API.
+
+### spring_level
+
+Set the level (0-100) for the spring type effects.
+
+### damper_level
+
+Set the level (0-100) for the damper type effects.
+
+### friction_level
+
+Set the level (0-100) for the friction type effects.
+
+### ffb_leds
+
+Use the wheel leds (when present) to monitor FF levels.
+
+Led combinations:
+ - All leds off: force < 7.5% (normally the force is lower than the wheel
+   mechanical friction so it will be too weak to be noticed).
+ - 1 led on from outside: 7.5%-25% force.
+ - 2 leds on from outside: 25%-50% force.
+ - 3 leds on from outside: 50%-75% force.
+ - 4 leds on from outside: 75%-90% force.
+ - 5 leds on from outside: 90%-100% force.
+ - 1 led off from outside: 100%-110% force (some clipping but most probably
+   unnoticeable).
+ - 2 leds off from outside: 110%-125% force (probably noticeable light clipping).
+ - 3 leds off from outside: 120%-150% force (clipping must be pretty noticeable).
+ - 4 leds off from outside: force > 150% (clipping hard).
+
+### peak_ffb_level
+
+It returns the maximum detected FF level value as an integer. It can be written
+to reset the value and start reading again. Values read will be always greater
+or equal than the last value written. Values between 0-65535 mean no clipping,
+greater values mean there can be clipping.
 
 ## Contributing
 
