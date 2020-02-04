@@ -147,7 +147,6 @@ struct lg4ff_device_entry {
 	spinlock_t timer_lock;
 	struct hid_report *report;
 	struct lg4ff_wheel_data wdata;
-	int (*input_dev_open)(struct input_dev *dev);
 	struct hid_device *hid;
 	struct timer_list timer;
 	struct hrtimer hrtimer;
@@ -2087,21 +2086,6 @@ static void lg4ff_destroy(struct ff_device *ff)
 {
 }
 
-static int lg4ff_open_device(struct input_dev *dev)
-{
-	struct hid_device *hid = input_get_drvdata(dev);
-	struct lg4ff_device_entry *entry;
-
-	entry = lg4ff_get_device_entry(hid);
-	if (entry == NULL) {
-		return -EINVAL;
-	}
-
-	entry->wdata.gain = 0xffff;
-
-	return entry->input_dev_open(dev);
-}
-
 int lg4ff_init(struct hid_device *hid)
 {
 	struct hid_input *hidinput = list_entry(hid->inputs.next, struct hid_input, list);
@@ -2191,9 +2175,6 @@ int lg4ff_init(struct hid_device *hid)
 
 	if (error)
 		goto err_init;
-
-	entry->input_dev_open = dev->open;
-	dev->open = lg4ff_open_device;
 
 	ff = dev->ff;
 	ff->upload = lg4ff_upload_effect;
@@ -2316,8 +2297,6 @@ err_init:
 
 int lg4ff_deinit(struct hid_device *hid)
 {
-	struct hid_input *hidinput = list_entry(hid->inputs.next, struct hid_input, list);
-	struct input_dev *dev = hidinput->input;
 	struct lg4ff_device_entry *entry;
 	struct lg_drv_data *drv_data;
 
@@ -2329,8 +2308,6 @@ int lg4ff_deinit(struct hid_device *hid)
 	entry = drv_data->device_props;
 	if (!entry)
 		goto out; /* Nothing more to do */
-
-	dev->open = entry->input_dev_open;
 
 	if (lowres_timer) {
 		del_timer(&entry->timer);
