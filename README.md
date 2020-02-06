@@ -211,7 +211,7 @@ Led combinations:
 
 It returns the maximum detected FF level value as an integer. It can be written
 to reset the value and start reading again. Values read will be always greater
-or equal than the last value written. Values between 0-65535 mean no clipping,
+or equal than the last value written. Values between 0-32768 mean no clipping,
 greater values mean there can be clipping.
 
 ## Contributing
