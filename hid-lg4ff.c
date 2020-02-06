@@ -22,7 +22,7 @@
 #include "hid-lg4ff.h"
 #include "hid-ids.h"
 
-#define LG4FF_VERSION "0.2b"
+#define LG4FF_VERSION "0.3"
 
 #define LG4FF_MMODE_IS_MULTIMODE 0
 #define LG4FF_MMODE_SWITCHED 1
