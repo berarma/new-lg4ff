@@ -450,48 +450,79 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 
 	memcpy(original_cmd, slot->current_cmd, sizeof(original_cmd));
 
+	if ((original_cmd[0] & 0xf) == 1) {
+		original_cmd[0] = (original_cmd[0] & 0xf0) + 0xc;
+	}
+
+	if (slot->effect_type == FF_CONSTANT) {
+		if (slot->cmd_op == 0) {
+			slot->cmd_op = 1;
+		} else {
+			slot->cmd_op = 0xc;
+		}
+	} else {
+		if (parameters->clip == 0) {
+			slot->cmd_op = 3;
+		} else if (slot->cmd_op == 3) {
+			slot->cmd_op = 1;
+		} else {
+			slot->cmd_op = 0xc;
+		}
+	}
+
 	slot->current_cmd[0] = (0x10 << slot->id) + slot->cmd_op;
-	switch (slot->effect_type) {
-		case FF_CONSTANT:
-			slot->current_cmd[1] = 0x00;
-			slot->current_cmd[2 + slot->id] = TRANSLATE_FORCE(parameters->level);
-			slot->current_cmd[3] = 0;
-			slot->current_cmd[4] = 0;
-			slot->current_cmd[5] = 0;
-			slot->current_cmd[6] = 0;
-			break;
-		case FF_SPRING:
-			d1 = SCALE_VALUE_U16(((parameters->d1) + 0x8000) & 0xffff, 11);
-			d2 = SCALE_VALUE_U16(((parameters->d2) + 0x8000) & 0xffff, 11);
-			s1 = parameters->k1 < 0;
-			s2 = parameters->k2 < 0;
-			slot->current_cmd[1] = 0x0b;
-			slot->current_cmd[2] = d1 >> 3;
-			slot->current_cmd[3] = d2 >> 3;
-			slot->current_cmd[4] = (SCALE_COEFF(parameters->k2, 4) << 4) + SCALE_COEFF(parameters->k1, 4);
-			slot->current_cmd[5] = ((d2 & 7) << 5) + ((d1 & 7) << 1) + (s2 << 4) + s1;
-			slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
-			break;
-		case FF_DAMPER:
-			s1 = parameters->k1 < 0;
-			s2 = parameters->k2 < 0;
-			slot->current_cmd[1] = 0x0c;
-			slot->current_cmd[2] = SCALE_COEFF(parameters->k1, 4);
-			slot->current_cmd[3] = s1;
-			slot->current_cmd[4] = SCALE_COEFF(parameters->k2, 4);
-			slot->current_cmd[5] = s2;
-			slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
-			break;
-		case FF_FRICTION:
-			s1 = parameters->k1 < 0;
-			s2 = parameters->k2 < 0;
-			slot->current_cmd[1] = 0x0e;
-			slot->current_cmd[2] = SCALE_COEFF(parameters->k1, 8);
-			slot->current_cmd[3] = SCALE_COEFF(parameters->k2, 8);
-			slot->current_cmd[4] = SCALE_VALUE_U16(parameters->clip, 8);
-			slot->current_cmd[5] = (s2 << 4) + s1;
-			slot->current_cmd[6] = 0;
-			break;
+
+	if (slot->cmd_op == 3) {
+		slot->current_cmd[1] = 0;
+		slot->current_cmd[2] = 0;
+		slot->current_cmd[3] = 0;
+		slot->current_cmd[4] = 0;
+		slot->current_cmd[5] = 0;
+		slot->current_cmd[6] = 0;
+	} else {
+		switch (slot->effect_type) {
+			case FF_CONSTANT:
+				slot->current_cmd[1] = 0x00;
+				slot->current_cmd[2] = 0;
+				slot->current_cmd[3] = 0;
+				slot->current_cmd[4] = 0;
+				slot->current_cmd[5] = 0;
+				slot->current_cmd[6] = 0;
+				slot->current_cmd[2 + slot->id] = TRANSLATE_FORCE(parameters->level);
+				break;
+			case FF_SPRING:
+				d1 = SCALE_VALUE_U16(((parameters->d1) + 0x8000) & 0xffff, 11);
+				d2 = SCALE_VALUE_U16(((parameters->d2) + 0x8000) & 0xffff, 11);
+				s1 = parameters->k1 < 0;
+				s2 = parameters->k2 < 0;
+				slot->current_cmd[1] = 0x0b;
+				slot->current_cmd[2] = d1 >> 3;
+				slot->current_cmd[3] = d2 >> 3;
+				slot->current_cmd[4] = (SCALE_COEFF(parameters->k2, 4) << 4) + SCALE_COEFF(parameters->k1, 4);
+				slot->current_cmd[5] = ((d2 & 7) << 5) + ((d1 & 7) << 1) + (s2 << 4) + s1;
+				slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
+				break;
+			case FF_DAMPER:
+				s1 = parameters->k1 < 0;
+				s2 = parameters->k2 < 0;
+				slot->current_cmd[1] = 0x0c;
+				slot->current_cmd[2] = SCALE_COEFF(parameters->k1, 4);
+				slot->current_cmd[3] = s1;
+				slot->current_cmd[4] = SCALE_COEFF(parameters->k2, 4);
+				slot->current_cmd[5] = s2;
+				slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
+				break;
+			case FF_FRICTION:
+				s1 = parameters->k1 < 0;
+				s2 = parameters->k2 < 0;
+				slot->current_cmd[1] = 0x0e;
+				slot->current_cmd[2] = SCALE_COEFF(parameters->k1, 8);
+				slot->current_cmd[3] = SCALE_COEFF(parameters->k2, 8);
+				slot->current_cmd[4] = SCALE_VALUE_U16(parameters->clip, 8);
+				slot->current_cmd[5] = (s2 << 4) + s1;
+				slot->current_cmd[6] = 0;
+				break;
+		}
 	}
 
 	if (memcmp(original_cmd, slot->current_cmd, sizeof(original_cmd))) {
@@ -917,11 +948,8 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry)
 
 	for (i = 0; i < 4; i++) {
 		entry->slots[i].id = i;
-		entry->slots[i].cmd_op = 0x01;
 		lg4ff_update_slot(&entry->slots[i], &parameters);
 		lg4ff_send_cmd(entry, entry->slots[i].current_cmd);
-		entry->slots[i].cmd_op = 0x0c;
-		lg4ff_update_slot(&entry->slots[i], &parameters);
 		entry->slots[i].is_updated = 0;
 	}
 }
