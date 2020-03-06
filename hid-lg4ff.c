@@ -895,7 +895,7 @@ static enum hrtimer_restart lg4ff_timer_hires(struct hrtimer *t)
 	}
 }
 
-static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device *ff)
+static void lg4ff_init_slots(struct lg4ff_device_entry *entry)
 {
 	struct lg4ff_effect_parameters parameters;
 	u8 cmd[8] = {0};
@@ -924,6 +924,14 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry, struct ff_device 
 		lg4ff_update_slot(&entry->slots[i], &parameters);
 		entry->slots[i].is_updated = 0;
 	}
+}
+
+static void lg4ff_stop_effects(struct lg4ff_device_entry *entry)
+{
+	u8 cmd[7] = {0};
+
+	cmd[0] = 0xf3;
+	lg4ff_send_cmd(entry, cmd);
 }
 
 static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, struct ff_effect *old)
@@ -2267,7 +2275,7 @@ int lg4ff_init(struct hid_device *hid)
 	if (entry->wdata.set_range)
 		entry->wdata.set_range(hid, entry->wdata.range);
 
-	lg4ff_init_slots(entry, dev->ff);
+	lg4ff_init_slots(entry);
 
 	entry->effects_used = 0;
 	entry->wdata.master_gain = 0xffff;
@@ -2333,6 +2341,8 @@ int lg4ff_deinit(struct hid_device *hid)
 	device_remove_file(&hid->dev, &dev_attr_spring_level);
 	device_remove_file(&hid->dev, &dev_attr_damper_level);
 	device_remove_file(&hid->dev, &dev_attr_friction_level);
+
+	lg4ff_stop_effects(entry);
 
 #ifdef CONFIG_LEDS_CLASS
 	if (entry->has_leds) {
