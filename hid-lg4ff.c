@@ -1821,8 +1821,6 @@ static ssize_t lg4ff_friction_level_store(struct device *dev, struct device_attr
 }
 static DEVICE_ATTR(friction_level, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_friction_level_show, lg4ff_friction_level_store);
 
-#ifdef CONFIG_LEDS_CLASS
-
 static ssize_t lg4ff_peak_ffb_level_show(struct device *dev, struct device_attribute *attr,
 				char *buf)
 {
@@ -1857,6 +1855,8 @@ static ssize_t lg4ff_peak_ffb_level_store(struct device *dev, struct device_attr
 	return count;
 }
 static DEVICE_ATTR(peak_ffb_level, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_peak_ffb_level_show, lg4ff_peak_ffb_level_store);
+
+#ifdef CONFIG_LEDS_CLASS
 
 static ssize_t lg4ff_ffb_leds_show(struct device *dev, struct device_attribute *attr,
 				char *buf)
@@ -2204,6 +2204,16 @@ int lg4ff_init(struct hid_device *hid)
 		dev->ff->set_autocenter(dev, 0);
 	}
 
+#ifdef CONFIG_LEDS_CLASS
+	if (lg4ff_devices[i].product_id == USB_DEVICE_ID_LOGITECH_G27_WHEEL ||
+			lg4ff_devices[i].product_id == USB_DEVICE_ID_LOGITECH_G29_WHEEL) {
+		entry->has_leds = 1;
+		lg4ff_init_leds(hid, entry, i);
+	} else {
+		ffb_leds = 0;
+	}
+#endif
+
 	/* Create sysfs interface */
 	error = device_create_file(&hid->dev, &dev_attr_combine_pedals);
 	if (error)
@@ -2242,9 +2252,13 @@ int lg4ff_init(struct hid_device *hid)
 	if (error)
 		hid_warn(hid, "Unable to create sysfs interface for \"friction_level\", errno %d\n", error);
 
-	error = device_create_file(&hid->dev, &dev_attr_ffb_leds);
-	if (error)
-		hid_warn(hid, "Unable to create sysfs interface for \"ffb_leds\", errno %d\n", error);
+#ifdef CONFIG_LEDS_CLASS
+	if (entry->has_leds) {
+		error = device_create_file(&hid->dev, &dev_attr_ffb_leds);
+		if (error)
+			hid_warn(hid, "Unable to create sysfs interface for \"ffb_leds\", errno %d\n", error);
+	}
+#endif
 
 	dbg_hid("sysfs interface created\n");
 
@@ -2268,16 +2282,6 @@ int lg4ff_init(struct hid_device *hid)
 		hrtimer_init(&entry->hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 		entry->hrtimer.function = lg4ff_timer_hires;
 	}
-
-#ifdef CONFIG_LEDS_CLASS
-	if (lg4ff_devices[i].product_id == USB_DEVICE_ID_LOGITECH_G27_WHEEL ||
-			lg4ff_devices[i].product_id == USB_DEVICE_ID_LOGITECH_G29_WHEEL) {
-		entry->has_leds = 1;
-		lg4ff_init_leds(hid, entry, i);
-	} else {
-		ffb_leds = 0;
-	}
-#endif
 
 	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (%s)\n", LG4FF_VERSION);
 
@@ -2329,12 +2333,13 @@ int lg4ff_deinit(struct hid_device *hid)
 	device_remove_file(&hid->dev, &dev_attr_spring_level);
 	device_remove_file(&hid->dev, &dev_attr_damper_level);
 	device_remove_file(&hid->dev, &dev_attr_friction_level);
-	device_remove_file(&hid->dev, &dev_attr_ffb_leds);
 
 #ifdef CONFIG_LEDS_CLASS
 	if (entry->has_leds) {
 		int j;
 		struct led_classdev *led;
+
+		device_remove_file(&hid->dev, &dev_attr_ffb_leds);
 
 		/* Deregister LEDs (if any) */
 		for (j = 0; j < 5; j++) {
@@ -2348,6 +2353,7 @@ int lg4ff_deinit(struct hid_device *hid)
 		}
 	}
 #endif
+
 	drv_data->device_props = NULL;
 
 	kfree(entry);
