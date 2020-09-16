@@ -1,9 +1,26 @@
 # new-lg4ff
 
-Experimental Logitech Force Feedback module for driving wheels
+Improved module driver for Logitech driving wheels.
+
+Supported devices:
+
+ - Logitech WingMan Formula GP (without force feedback)
+ - Logitech WingMan Formula Force GP
+ - Logitech Driving Force
+ - Logitech MOMO Force Feedback Racing Wheel
+ - Logitech Driving Force Pro
+ - Logitech G25 Racing Wheel
+ - Logitech Driving Force GT (tested)
+ - Logitech G27 Racing Wheel (tested)
+ - Logitech G29 Driving Force (tested)
+ - Logitech MOMO Racing
+ - Logitech Speed Force Wireless Wheel for Wii
 
 This module is not compatible with the Logitech G920 Driving Force that already
 has full effects support implemented by firmware and uses the HID++ driver.
+
+Reports on success or failure using this module on untested devices are
+welcome.
 
 ## Differences with the in-tree module
 
