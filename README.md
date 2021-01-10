@@ -1,6 +1,6 @@
-# new-lg4ff
+# new-lg4ff for Linux
 
-Improved module driver for Logitech driving wheels.
+Improved Linux module driver for Logitech driving wheels.
 
 Supported devices:
 
