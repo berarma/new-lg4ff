@@ -4,17 +4,17 @@ Improved Linux module driver for Logitech driving wheels.
 
 Supported devices:
 
- - Logitech WingMan Formula GP (without force feedback)
- - Logitech WingMan Formula Force GP
- - Logitech Driving Force
- - Logitech MOMO Force Feedback Racing Wheel
- - Logitech Driving Force Pro
- - Logitech G25 Racing Wheel
- - Logitech Driving Force GT (tested)
- - Logitech G27 Racing Wheel (tested)
- - Logitech G29 Driving Force (tested)
- - Logitech MOMO Racing
- - Logitech Speed Force Wireless Wheel for Wii
+- Logitech WingMan Formula GP (without force feedback)
+- Logitech WingMan Formula Force GP
+- Logitech Driving Force
+- Logitech MOMO Force Feedback Racing Wheel
+- Logitech Driving Force Pro
+- Logitech G25 Racing Wheel
+- Logitech Driving Force GT (tested)
+- Logitech G27 Racing Wheel (tested)
+- Logitech G29 Driving Force (tested)
+- Logitech MOMO Racing
+- Logitech Speed Force Wireless Wheel for Wii
 
 This module is not compatible with the Logitech G920 Driving Force that already
 has full effects support implemented by firmware and uses the HID++ driver.
@@ -27,22 +27,22 @@ welcome.
 It has all the features in the in-kernel `hid-logitech` module and adds the
 following ones:
 
- - Support for most effects defined in the Linux FF API (except inertia).
- - Asynchronous operations with realtime handling of effects.
- - Rate limited FF updates with best possible latency.
- - Tunable sprint, damper and friction effect types gain.
- - Combine accelerator and clutch.
- - Use the wheel leds as a FFBmeter to monitor clipping.
- - Added a system gain setting that modulates the gain setting used by
-   applications.
- - SYSFS entries for gain, autocenter, spring/damper/friction effect gain and
+- Support for most effects defined in the Linux FF API (except inertia).
+- Asynchronous operations with realtime handling of effects.
+- Rate limited FF updates with best possible latency.
+- Tunable sprint, damper and friction effect types gain.
+- Combine accelerator and clutch.
+- Use the wheel leds as a FFBmeter to monitor clipping.
+- Added a system gain setting that modulates the gain setting used by
+  applications.
+- SYSFS entries for gain, autocenter, spring/damper/friction effect gain and
    FFBmeter.
 
 ## Requirements
 
- - GMake
- - GCC
- - `linux-kbuild` and `linux-headers` packages matching the installed kernel
+- GMake
+- GCC
+- `linux-kbuild` and `linux-headers` packages matching the installed kernel
    version.
 
 ## Build and install
@@ -58,11 +58,9 @@ automatically at system reboot.
 
 Follow these steps:
 
- - Install `dkms` from the package manager in your system.
-
- - Download the project to `/usr/src/new-lg4ff`.
-
- - Install the module:
+- Install `dkms` from the package manager in your system.
+- Download the project to `/usr/src/new-lg4ff`.
+- Install the module:
 
 `$ sudo dkms install /usr/src/new-lg4ff`
 
@@ -141,34 +139,34 @@ You can use `modinfo` to query for available options.
 
 New options available:
 
- - timer_msecs: Set the timer period. The timer is used to update the FF
-   effects in the device. It changes the maximum latency and the maximum rate
-   at which commands are sent. Maximum 4 commands every timer period get sent.
-   When using the lowres timer it will be rounded to the nearest possible value
-   (1ms for 1000Hz or 4ms for 250Hz kernels). The default value is 2ms, less
-   will have no benefit and greater may add unrequired latency.
+- timer_msecs: Set the timer period. The timer is used to update the FF
+  effects in the device. It changes the maximum latency and the maximum rate
+  at which commands are sent. Maximum 4 commands every timer period get sent.
+  When using the lowres timer it will be rounded to the nearest possible value
+  (1ms for 1000Hz or 4ms for 250Hz kernels). The default value is 2ms, less
+  will have no benefit and greater may add unrequired latency.
 
- - fixed_loop: Set the firmware loop mode to fixed or fast. In fixed mode it
-   runs at about 500Hz. In fast mode it runs as fast as it can. The default is
-   fast loop to try to minimize latencies.
+- fixed_loop: Set the firmware loop mode to fixed or fast. In fixed mode it
+  runs at about 500Hz. In fast mode it runs as fast as it can. The default is
+  fast loop to try to minimize latencies.
 
- - timer_mode: Fixed (0), static (1) or dynamic (2). In fixed mode the timer
-   period will not change. In static mode the period will increase as needed.
-   In dynamic mode the timer period will be dynamic trying to maintain synch
-   with the device to minimize latencies (default).
+- timer_mode: Fixed (0), static (1) or dynamic (2). In fixed mode the timer
+  period will not change. In static mode the period will increase as needed.
+  In dynamic mode the timer period will be dynamic trying to maintain synch
+  with the device to minimize latencies (default).
 
- - lowres_timer: Disabled by default. For compatibility testing, when set the
-   hires timer is disabled.
+- lowres_timer: Disabled by default. For compatibility testing, when set the
+  hires timer is disabled.
 
- - profile: Enable debug messages when set to 1.
+- profile: Enable debug messages when set to 1.
 
- - spring_level: (see the corresponding SYSFS entry).
+- spring_level: (see the corresponding SYSFS entry).
 
- - damper_level: (see the corresponding SYSFS entry).
+- damper_level: (see the corresponding SYSFS entry).
 
- - friction_level: (see the corresponding SYSFS entry).
+- friction_level: (see the corresponding SYSFS entry).
 
- - ffb_leds: (see the corresponding SYSFS entry).
+- ffb_leds: (see the corresponding SYSFS entry).
 
 ## New SYSFS entries
 
@@ -186,8 +184,8 @@ combines the clutch and gas pedals in the same axis.
 
 ### gain
 
-Get/set the global FF gain (0-65535). This property is independent of the gain set by
-applications using the Linux FF API.
+Get/set the global FF gain (0-65535). This property is independent of the gain
+set by applications using the Linux FF API.
 
 ### autocenter
 
@@ -211,18 +209,19 @@ Set the level (0-100) for the friction type effects.
 Use the wheel leds (when present) to monitor FF levels.
 
 Led combinations:
- - All leds off: force < 7.5% (normally the force is lower than the wheel
-   mechanical friction so it will be too weak to be noticed).
- - 1 led on from outside: 7.5%-25% force.
- - 2 leds on from outside: 25%-50% force.
- - 3 leds on from outside: 50%-75% force.
- - 4 leds on from outside: 75%-90% force.
- - 5 leds on from outside: 90%-100% force.
- - 1 led off from outside: 100%-110% force (some clipping but most probably
-   unnoticeable).
- - 2 leds off from outside: 110%-125% force (probably noticeable light clipping).
- - 3 leds off from outside: 120%-150% force (clipping must be pretty noticeable).
- - 4 leds off from outside: force > 150% (clipping hard).
+
+- All leds off: force < 7.5% (normally the force is lower than the wheel
+  mechanical friction so it will be too weak to be noticed).
+- 1 led on from outside: 7.5%-25% force.
+- 2 leds on from outside: 25%-50% force.
+- 3 leds on from outside: 50%-75% force.
+- 4 leds on from outside: 75%-90% force.
+- 5 leds on from outside: 90%-100% force.
+- 1 led off from outside: 100%-110% force (some clipping but most probably
+  unnoticeable).
+- 2 leds off from outside: 110%-125% force (probably noticeable light clipping).
+- 3 leds off from outside: 120%-150% force (clipping must be pretty noticeable).
+- 4 leds off from outside: force > 150% (clipping hard).
 
 ### peak_ffb_level
 
