@@ -42,8 +42,7 @@ following ones:
 
 - GMake
 - GCC
-- `linux-kbuild` and `linux-headers` packages matching the installed kernel
-   version.
+- The `linux-headers` package matching the installed kernel version.
 
 ## Build and install
 
