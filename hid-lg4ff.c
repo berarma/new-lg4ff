@@ -365,7 +365,7 @@ static const struct lg4ff_compat_mode_switch lg4ff_mode_switch_ext16_g25 = {
 
 static int timer_msecs = DEFAULT_TIMER_PERIOD;
 module_param(timer_msecs, int, 0660);
-MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs (when using the lowres timer it will be rounded up to jiffies).");
+MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs.");
 
 static int fixed_loop = 0;
 module_param(fixed_loop, int, 0);
@@ -374,10 +374,6 @@ MODULE_PARM_DESC(fixed_loop, "Put the device into fixed loop mode.");
 static int timer_mode = 2;
 module_param(timer_mode, int, 0660);
 MODULE_PARM_DESC(timer_mode, "Timer mode: 0) fixed, 1) static, 2) dynamic (default).");
-
-static int lowres_timer = 0;
-module_param(lowres_timer, int, 0);
-MODULE_PARM_DESC(lowres_timer, "Use low res timers.");
 
 static int profile = 0;
 module_param(profile, int, 0660);
@@ -878,28 +874,6 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 	return 0;
 }
 
-static void lg4ff_timer_lowres(struct timer_list *t)
-{
-	struct lg4ff_device_entry *entry = from_timer(entry, t, timer);
-	unsigned long jiffies_now = jiffies;
-	int delay_timer;
-
-	delay_timer = lg4ff_timer(entry);
-
-	if (delay_timer) {
-		mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(delay_timer));
-		return;
-	}
-
-	if (entry->effects_used) {
-		mod_timer(&entry->timer, jiffies_now + msecs_to_jiffies(timer_msecs));
-	} else {
-		del_timer(&entry->timer);
-		if (unlikely(profile))
-			DEBUG("Stop timer.");
-	}
-}
-
 static enum hrtimer_restart lg4ff_timer_hires(struct hrtimer *t)
 {
 	struct lg4ff_device_entry *entry = container_of(t, struct lg4ff_device_entry, hrtimer);
@@ -1021,11 +995,7 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 			STOP_EFFECT(state);
 		} else {
 			entry->effects_used++;
-			if (lowres_timer && !timer_pending(&entry->timer)) {
-				mod_timer(&entry->timer, jiffies + msecs_to_jiffies(timer_msecs));
-				if (unlikely(profile))
-					DEBUG("Start timer.");
-			} else if (!lowres_timer && !hrtimer_active(&entry->hrtimer)) {
+			if (!hrtimer_active(&entry->hrtimer)) {
 				hrtimer_start(&entry->hrtimer, ms_to_ktime(timer_msecs), HRTIMER_MODE_REL);
 				if (unlikely(profile))
 					DEBUG("Start timer.");
@@ -2318,21 +2288,12 @@ int lg4ff_init(struct hid_device *hid)
 
 	spin_lock_init(&entry->timer_lock);
 
-	if (lowres_timer) {
-		timer_msecs = jiffies_to_msecs(msecs_to_jiffies(timer_msecs));
-		timer_setup(&entry->timer, lg4ff_timer_lowres, 0);
-	} else {
-		hrtimer_init(&entry->hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-		entry->hrtimer.function = lg4ff_timer_hires;
-	}
+	hrtimer_init(&entry->hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	entry->hrtimer.function = lg4ff_timer_hires;
 
 	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (%s)\n", LG4FF_VERSION);
 
-	if (lowres_timer) {
-		hid_info(hid, "Lowres timer: HZ (jiffies) = %d, timer period = %d ms", HZ, timer_msecs);
-	} else {
-		hid_info(hid, "Hires timer: period = %d ms", timer_msecs);
-	}
+	hid_info(hid, "Hires timer: period = %d ms", timer_msecs);
 
 	return 0;
 
@@ -2358,11 +2319,7 @@ int lg4ff_deinit(struct hid_device *hid)
 	if (!entry)
 		goto out; /* Nothing more to do */
 
-	if (lowres_timer) {
-		del_timer(&entry->timer);
-	} else {
-		hrtimer_cancel(&entry->hrtimer);
-	}
+	hrtimer_cancel(&entry->hrtimer);
 
 	/* Multimode devices will have at least the "MODE_NATIVE" bit set */
 	if (entry->wdata.alternate_modes) {

@@ -141,9 +141,8 @@ New options available:
 - timer_msecs: Set the timer period. The timer is used to update the FF
   effects in the device. It changes the maximum latency and the maximum rate
   at which commands are sent. Maximum 4 commands every timer period get sent.
-  When using the lowres timer it will be rounded to the nearest possible value
-  (1ms for 1000Hz or 4ms for 250Hz kernels). The default value is 2ms, less
-  will have no benefit and greater may add unrequired latency.
+   The default value is 2ms, less will have no benefit and greater may add
+   unrequired latency.
 
 - fixed_loop: Set the firmware loop mode to fixed or fast. In fixed mode it
   runs at about 500Hz. In fast mode it runs as fast as it can. The default is
@@ -153,9 +152,6 @@ New options available:
   period will not change. In static mode the period will increase as needed.
   In dynamic mode the timer period will be dynamic trying to maintain synch
   with the device to minimize latencies (default).
-
-- lowres_timer: Disabled by default. For compatibility testing, when set the
-  hires timer is disabled.
 
 - profile: Enable debug messages when set to 1.
 
