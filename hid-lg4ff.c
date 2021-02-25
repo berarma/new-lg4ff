@@ -2265,28 +2265,35 @@ int lg4ff_init(struct hid_device *hid)
 		if (error)
 			hid_warn(hid, "Unable to create sysfs interface for \"alternate_modes\", errno %d\n", error);
 	}
-	error = device_create_file(&hid->dev, &dev_attr_gain);
-	if (error)
-		hid_warn(hid, "Unable to create sysfs interface for \"gain\", errno %d\n", error);
-	error = device_create_file(&hid->dev, &dev_attr_autocenter);
-	if (error)
-		hid_warn(hid, "Unable to create sysfs interface for \"autocenter\", errno %d\n", error);
 
-	error = device_create_file(&hid->dev, &dev_attr_peak_ffb_level);
-	if (error)
-		hid_warn(hid, "Unable to create sysfs interface for \"peak_ffb_level\", errno %d\n", error);
-
-	error = device_create_file(&hid->dev, &dev_attr_spring_level);
-	if (error)
-		hid_warn(hid, "Unable to create sysfs interface for \"spring_level\", errno %d\n", error);
-
-	error = device_create_file(&hid->dev, &dev_attr_damper_level);
-	if (error)
-		hid_warn(hid, "Unable to create sysfs interface for \"damper_level\", errno %d\n", error);
-
-	error = device_create_file(&hid->dev, &dev_attr_friction_level);
-	if (error)
-		hid_warn(hid, "Unable to create sysfs interface for \"friction_level\", errno %d\n", error);
+	if (dev->ffbit) {
+		error = device_create_file(&hid->dev, &dev_attr_gain);
+		if (error)
+			hid_warn(hid, "Unable to create sysfs interface for \"gain\", errno %d\n", error);
+		if (test_bit(FF_AUTOCENTER, dev->ffbit)) {
+			error = device_create_file(&hid->dev, &dev_attr_autocenter);
+			if (error)
+				hid_warn(hid, "Unable to create sysfs interface for \"autocenter\", errno %d\n", error);
+		}
+		error = device_create_file(&hid->dev, &dev_attr_peak_ffb_level);
+		if (error)
+			hid_warn(hid, "Unable to create sysfs interface for \"peak_ffb_level\", errno %d\n", error);
+		if (test_bit(FF_SPRING, dev->ffbit)) {
+			error = device_create_file(&hid->dev, &dev_attr_spring_level);
+			if (error)
+				hid_warn(hid, "Unable to create sysfs interface for \"spring_level\", errno %d\n", error);
+		}
+		if (test_bit(FF_DAMPER, dev->ffbit)) {
+			error = device_create_file(&hid->dev, &dev_attr_damper_level);
+			if (error)
+				hid_warn(hid, "Unable to create sysfs interface for \"damper_level\", errno %d\n", error);
+		}
+		if (test_bit(FF_FRICTION, dev->ffbit)) {
+			error = device_create_file(&hid->dev, &dev_attr_friction_level);
+			if (error)
+				hid_warn(hid, "Unable to create sysfs interface for \"friction_level\", errno %d\n", error);
+		}
+	}
 
 #ifdef CONFIG_LEDS_CLASS
 	if (entry->has_leds) {
@@ -2337,6 +2344,8 @@ err_init:
 
 int lg4ff_deinit(struct hid_device *hid)
 {
+	struct hid_input *hidinput = list_entry(hid->inputs.next, struct hid_input, list);
+	struct input_dev *dev = hidinput->input;
 	struct lg4ff_device_entry *entry;
 	struct lg_drv_data *drv_data;
 
@@ -2363,12 +2372,23 @@ int lg4ff_deinit(struct hid_device *hid)
 
 	device_remove_file(&hid->dev, &dev_attr_combine_pedals);
 	device_remove_file(&hid->dev, &dev_attr_range);
-	device_remove_file(&hid->dev, &dev_attr_gain);
-	device_remove_file(&hid->dev, &dev_attr_autocenter);
-	device_remove_file(&hid->dev, &dev_attr_peak_ffb_level);
-	device_remove_file(&hid->dev, &dev_attr_spring_level);
-	device_remove_file(&hid->dev, &dev_attr_damper_level);
-	device_remove_file(&hid->dev, &dev_attr_friction_level);
+
+	if (dev->ffbit) {
+		device_remove_file(&hid->dev, &dev_attr_gain);
+		if (test_bit(FF_AUTOCENTER, dev->ffbit)) {
+			device_remove_file(&hid->dev, &dev_attr_autocenter);
+		}
+		device_remove_file(&hid->dev, &dev_attr_peak_ffb_level);
+		if (test_bit(FF_SPRING, dev->ffbit)) {
+			device_remove_file(&hid->dev, &dev_attr_spring_level);
+		}
+		if (test_bit(FF_DAMPER, dev->ffbit)) {
+			device_remove_file(&hid->dev, &dev_attr_damper_level);
+		}
+		if (test_bit(FF_FRICTION, dev->ffbit)) {
+			device_remove_file(&hid->dev, &dev_attr_friction_level);
+		}
+	}
 
 	lg4ff_stop_effects(entry);
 
