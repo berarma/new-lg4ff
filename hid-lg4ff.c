@@ -152,8 +152,8 @@ struct lg4ff_device_entry {
 	struct hrtimer hrtimer;
 	struct lg4ff_slot slots[4];
 	struct lg4ff_effect_state states[LG4FF_MAX_EFFECTS];
+	unsigned peak_ffb_level;
 	int effects_used;
-	unsigned long peak_ffb_level;
 #ifdef CONFIG_LEDS_CLASS
 	int has_leds;
 #endif
@@ -528,9 +528,9 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 
 static __always_inline int lg4ff_calculate_constant(struct lg4ff_effect_state *state)
 {
-	int level = state->effect.u.constant.level;
 	int level_sign;
-	long d, t;
+	int level = state->effect.u.constant.level;
+	int d, t;
 
 	if (state->time_playing < state->envelope->attack_length) {
 		level_sign = level < 0 ? -1 : 1;
@@ -551,9 +551,9 @@ static __always_inline int lg4ff_calculate_constant(struct lg4ff_effect_state *s
 static __always_inline int lg4ff_calculate_ramp(struct lg4ff_effect_state *state)
 {
 	struct ff_ramp_effect *ramp = &state->effect.u.ramp;
-	int level = INT_MAX;
 	int level_sign;
-	long d, t;
+	int level = INT_MAX;
+	int d, t;
 
 	if (state->time_playing < state->envelope->attack_length) {
 		level = ramp->start_level;
@@ -578,10 +578,10 @@ static __always_inline int lg4ff_calculate_ramp(struct lg4ff_effect_state *state
 static __always_inline int lg4ff_calculate_periodic(struct lg4ff_effect_state *state)
 {
 	struct ff_periodic_effect *periodic = &state->effect.u.periodic;
-	int level = periodic->offset;
 	int magnitude = periodic->magnitude;
 	int magnitude_sign = magnitude < 0 ? -1 : 1;
-	long d, t;
+	int level = periodic->offset;
+	int d, t;
 
 	if (state->time_playing < state->envelope->attack_length) {
 		d = magnitude - magnitude_sign * state->envelope->attack_level;
@@ -720,7 +720,7 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 	unsigned long jiffies_now = jiffies;
 	unsigned long now = JIFFIES2MS(jiffies_now);
 	unsigned long flags;
-	unsigned int gain;
+	unsigned gain;
 	int current_period;
 	int count;
 	int effect_id;
@@ -745,7 +745,7 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 
 	memset(parameters, 0, sizeof(parameters));
 
-	gain = (unsigned long)entry->wdata.master_gain * entry->wdata.gain / 0xffff;
+	gain = (unsigned)entry->wdata.master_gain * entry->wdata.gain / 0xffff;
 
 	spin_lock_irqsave(&entry->timer_lock, flags);
 
@@ -807,16 +807,16 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
-	parameters[0].level = (long)parameters[0].level * gain / 0xffff;
-	parameters[1].clip = (long)parameters[1].clip * spring_level / 100;
-	parameters[2].clip = (long)parameters[2].clip * damper_level / 100;
-	parameters[3].clip = (long)parameters[3].clip * friction_level / 100;
+	parameters[0].level = (int)parameters[0].level * (int)gain / 0xffff;
+	parameters[1].clip = parameters[1].clip * spring_level / 100;
+	parameters[2].clip = parameters[2].clip * damper_level / 100;
+	parameters[3].clip = parameters[3].clip * friction_level / 100;
 
 	ffb_level = abs(parameters[0].level);
 	for (i = 1; i < 4; i++) {
-		parameters[i].k1 = (long)parameters[i].k1 * gain / 0xffff;
-		parameters[i].k2 = (long)parameters[i].k2 * gain / 0xffff;
-		parameters[i].clip = (long)parameters[i].clip * gain / 0xffff;
+		parameters[i].k1 = parameters[i].k1 * gain / 0xffff;
+		parameters[i].k2 = parameters[i].k2 * gain / 0xffff;
+		parameters[i].clip = parameters[i].clip * gain / 0xffff;
 		ffb_level += parameters[i].clip * 0x7fff / 0xffff;
 	}
 	if (ffb_level > entry->peak_ffb_level) {
@@ -1839,7 +1839,7 @@ static ssize_t lg4ff_peak_ffb_level_show(struct device *dev, struct device_attri
 		return -EINVAL;
 	}
 
-	count = scnprintf(buf, PAGE_SIZE, "%lu\n", entry->peak_ffb_level);
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->peak_ffb_level);
 
 	return count;
 }
