@@ -776,19 +776,14 @@ static int lg_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	struct lg_drv_data *drv_data;
 	int ret;
 
-	/* G29 only work with the 1st interface */
-	if ((hdev->product == USB_DEVICE_ID_LOGITECH_G29_WHEEL) &&
+	/* G29 and G923 only work with the 1st interface */
+	if ((hdev->product == USB_DEVICE_ID_LOGITECH_G29_WHEEL || 
+		hdev->product == USB_DEVICE_ID_LOGITECH_G923_WHEEL) &&
 	    (iface_num != 0)) {
 		dbg_hid("%s: ignoring ifnum %d\n", __func__, iface_num);
 		return -ENODEV;
 	}
-	/* G923 only work with the 1st interface */
-	if ((hdev->product == USB_DEVICE_ID_LOGITECH_G923_WHEEL) &&
-	    (iface_num != 0)) {
-		dbg_hid("%s: ignoring ifnum %d\n", __func__, iface_num);
-		return -ENODEV;
-	}
-
+	
 	drv_data = kzalloc(sizeof(struct lg_drv_data), GFP_KERNEL);
 	if (!drv_data) {
 		hid_err(hdev, "Insufficient memory, cannot allocate driver data\n");
