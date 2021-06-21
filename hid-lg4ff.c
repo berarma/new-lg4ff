@@ -254,7 +254,7 @@ static const struct lg4ff_multimode_wheel lg4ff_multimode_wheels[] = {
 	 LG4FF_MODE_NATIVE | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
 	 LG4FF_G29_TAG, LG4FF_G29_NAME},
 	{USB_DEVICE_ID_LOGITECH_G923_WHEEL,
-	 LG4FF_MODE_NATIVE | LG4FF_MODE_G29,
+	 LG4FF_MODE_NATIVE | LG4FF_MODE_G923 | LG4FF_MODE_G29,
 	 LG4FF_G923_TAG, LG4FF_G923_NAME},
 };
 
@@ -312,8 +312,15 @@ static const struct lg4ff_wheel_ident_info lg4ff_g29_ident_info2 = {
 	USB_DEVICE_ID_LOGITECH_G29_WHEEL
 };
 
+static const struct lg4ff_wheel_ident_info lg4ff_g923_ident_info = {
+	LG4FF_MODE_G923 | LG4FF_MODE_G29,
+	0xfff8,
+	0x1350,
+	USB_DEVICE_ID_LOGITECH_G923_WHEEL
+};
+
 static const struct lg4ff_wheel_ident_info lg4ff_g923_ident_info2 = {
-	LG4FF_MODE_G923 | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
+	LG4FF_MODE_G923 | LG4FF_MODE_G29,
 	0xff00,
 	0x8900,
 	USB_DEVICE_ID_LOGITECH_G923_WHEEL
@@ -323,6 +330,7 @@ static const struct lg4ff_wheel_ident_info lg4ff_g923_ident_info2 = {
 static const struct lg4ff_wheel_ident_info *lg4ff_main_checklist[] = {
 	&lg4ff_g29_ident_info,
 	&lg4ff_g29_ident_info2,
+	&lg4ff_g923_ident_info,
 	&lg4ff_g923_ident_info2,
 	&lg4ff_dfgt_ident_info,
 	&lg4ff_g27_ident_info,
@@ -1984,7 +1992,7 @@ static void lg4ff_init_leds(struct hid_device *hid, struct lg4ff_device_entry *e
 {
 	int error, j;
 
-	/* register led subsystem - G27/G29 only */
+	/* register led subsystem - G27/G29/G923 only */
 	entry->wdata.led_state = 0;
 	for (j = 0; j < 5; j++)
 		entry->wdata.led[j] = NULL;
