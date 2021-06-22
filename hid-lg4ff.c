@@ -376,6 +376,12 @@ static const struct lg4ff_compat_mode_switch lg4ff_mode_switch_ext09_g29 = {
 	 0xf8, 0x09, 0x05, 0x01, 0x01, 0x00, 0x00}	/* Switch mode to G29 with detach */
 };
 
+static const struct lg4ff_compat_mode_switch lg4ff_mode_switch_ext09_g923 = {
+	2,
+	{0xf8, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00,	/* Revert mode upon USB reset */
+	 0xf8, 0x09, 0x07, 0x01, 0x01, 0x00, 0x00}	/* Switch mode to G923 with detach */
+};
+
 /* EXT_CMD1 - Understood by DFP, G25, G27 and DFGT */
 static const struct lg4ff_compat_mode_switch lg4ff_mode_switch_ext01_dfp = {
 	1,
@@ -1431,6 +1437,16 @@ static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(cons
 		case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
 			return &lg4ff_mode_switch_ext09_g29;
 		/* G29 can only be switched to DF-EX, DFP, DFGT, G25, G27 or its native mode */
+		default:
+			return NULL;
+		}
+		break;
+	case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
+		switch (target_product_id) {
+		case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
+			return &lg4ff_mode_switch_ext09_g29;
+		case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
+			return &lg4ff_mode_switch_ext09_g923;
 		default:
 			return NULL;
 		}
