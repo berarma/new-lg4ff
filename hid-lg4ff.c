@@ -254,7 +254,7 @@ static const struct lg4ff_multimode_wheel lg4ff_multimode_wheels[] = {
 	 LG4FF_MODE_NATIVE | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
 	 LG4FF_G29_TAG, LG4FF_G29_NAME},
 	{USB_DEVICE_ID_LOGITECH_G923_WHEEL,
-	 LG4FF_MODE_NATIVE | LG4FF_MODE_G923 | LG4FF_MODE_G29,
+	 LG4FF_MODE_NATIVE | LG4FF_MODE_G923 | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
 	 LG4FF_G923_TAG, LG4FF_G923_NAME},
 };
 
@@ -313,25 +313,18 @@ static const struct lg4ff_wheel_ident_info lg4ff_g29_ident_info2 = {
 };
 
 static const struct lg4ff_wheel_ident_info lg4ff_g923_ident_info = {
-	LG4FF_MODE_G923 | LG4FF_MODE_G29,
-	0xfff8,
-	0x1350,
+	LG4FF_MODE_G923 | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
+	0xff00,
+	0x3800,
 	USB_DEVICE_ID_LOGITECH_G923_WHEEL
 };
 
-static const struct lg4ff_wheel_ident_info lg4ff_g923_ident_info2 = {
-	LG4FF_MODE_G923 | LG4FF_MODE_G29,
-	0xff00,
-	0x8900,
-	USB_DEVICE_ID_LOGITECH_G923_WHEEL
-};
 
 /* Multimode wheel identification checklists */
 static const struct lg4ff_wheel_ident_info *lg4ff_main_checklist[] = {
 	&lg4ff_g29_ident_info,
 	&lg4ff_g29_ident_info2,
 	&lg4ff_g923_ident_info,
-	&lg4ff_g923_ident_info2,
 	&lg4ff_dfgt_ident_info,
 	&lg4ff_g27_ident_info,
 	&lg4ff_g25_ident_info,
@@ -1443,6 +1436,14 @@ static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(cons
 		break;
 	case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
 		switch (target_product_id) {
+		case USB_DEVICE_ID_LOGITECH_DFP_WHEEL:
+			return &lg4ff_mode_switch_ext09_dfp;
+		case USB_DEVICE_ID_LOGITECH_DFGT_WHEEL:
+			return &lg4ff_mode_switch_ext09_dfgt;
+		case USB_DEVICE_ID_LOGITECH_G25_WHEEL:
+			return &lg4ff_mode_switch_ext09_g25;
+		case USB_DEVICE_ID_LOGITECH_G27_WHEEL:
+			return &lg4ff_mode_switch_ext09_g27;
 		case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
 			return &lg4ff_mode_switch_ext09_g29;
 		case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
