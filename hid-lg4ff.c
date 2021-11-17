@@ -35,8 +35,9 @@
 #define LG4FF_MODE_DFGT_IDX 4
 #define LG4FF_MODE_G27_IDX 5
 #define LG4FF_MODE_G29_IDX 6
-#define LG4FF_MODE_G923_IDX 7
-#define LG4FF_MODE_MAX_IDX 8
+#define LG4FF_MODE_G923_PS_IDX 7
+#define LG4FF_MODE_G923_IDX 8
+#define LG4FF_MODE_MAX_IDX 9
 
 #define LG4FF_MODE_NATIVE BIT(LG4FF_MODE_NATIVE_IDX)
 #define LG4FF_MODE_DFEX BIT(LG4FF_MODE_DFEX_IDX)
@@ -45,6 +46,7 @@
 #define LG4FF_MODE_DFGT BIT(LG4FF_MODE_DFGT_IDX)
 #define LG4FF_MODE_G27 BIT(LG4FF_MODE_G27_IDX)
 #define LG4FF_MODE_G29 BIT(LG4FF_MODE_G29_IDX)
+#define LG4FF_MODE_G923_PS BIT(LG4FF_MODE_G923_PS_IDX)
 #define LG4FF_MODE_G923 BIT(LG4FF_MODE_G923_IDX)
 
 #define LG4FF_DFEX_TAG "DF-EX"
@@ -59,6 +61,8 @@
 #define LG4FF_G29_NAME "G29 Racing Wheel"
 #define LG4FF_G923_TAG "G923"
 #define LG4FF_G923_NAME "G923 Racing Wheel"
+#define LG4FF_G923_PS_TAG "G923"
+#define LG4FF_G923_PS_NAME "G923 Racing Wheel (Playstation mode)"
 #define LG4FF_DFGT_TAG "DFGT"
 #define LG4FF_DFGT_NAME "Driving Force GT"
 
@@ -253,6 +257,9 @@ static const struct lg4ff_multimode_wheel lg4ff_multimode_wheels[] = {
 	{USB_DEVICE_ID_LOGITECH_G29_WHEEL,
 	 LG4FF_MODE_NATIVE | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
 	 LG4FF_G29_TAG, LG4FF_G29_NAME},
+	{USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL,
+	 LG4FF_MODE_G923_PS,
+	 LG4FF_G923_PS_TAG, LG4FF_G923_PS_NAME},
 	{USB_DEVICE_ID_LOGITECH_G923_WHEEL,
 	 LG4FF_MODE_NATIVE | LG4FF_MODE_G923 | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
 	 LG4FF_G923_TAG, LG4FF_G923_NAME},
@@ -266,6 +273,7 @@ static const struct lg4ff_alternate_mode lg4ff_alternate_modes[] = {
 	[LG4FF_MODE_DFGT_IDX] = {USB_DEVICE_ID_LOGITECH_DFGT_WHEEL, LG4FF_DFGT_TAG, LG4FF_DFGT_NAME},
 	[LG4FF_MODE_G27_IDX] = {USB_DEVICE_ID_LOGITECH_G27_WHEEL, LG4FF_G27_TAG, LG4FF_G27_NAME},
 	[LG4FF_MODE_G29_IDX] = {USB_DEVICE_ID_LOGITECH_G29_WHEEL, LG4FF_G29_TAG, LG4FF_G29_NAME},
+	[LG4FF_MODE_G923_PS_IDX] = {USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL, LG4FF_G923_PS_TAG, LG4FF_G923_PS_NAME},
 	[LG4FF_MODE_G923_IDX] = {USB_DEVICE_ID_LOGITECH_G923_WHEEL, LG4FF_G923_TAG, LG4FF_G923_NAME},
 };
 
@@ -313,7 +321,7 @@ static const struct lg4ff_wheel_ident_info lg4ff_g29_ident_info2 = {
 };
 
 static const struct lg4ff_wheel_ident_info lg4ff_g923_ident_info = {
-	LG4FF_MODE_G923 | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
+	LG4FF_MODE_G923_PS | LG4FF_MODE_G923 | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
 	0xff00,
 	0x3800,
 	USB_DEVICE_ID_LOGITECH_G923_WHEEL
@@ -387,6 +395,13 @@ static const struct lg4ff_compat_mode_switch lg4ff_mode_switch_ext16_g25 = {
 	{0xf8, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00}
 };
 
+/* 0x30 - PS mode - Understood by G923 PS */
+// Report ID must be 0x30
+static const struct lg4ff_compat_mode_switch lg4ff_mode_switch_30_g923 = {
+	1,
+	{0xf8, 0x09, 0x07, 0x01, 0x01, 0x00, 0x00}	/* Switch mode to G923 with detach */
+};
+
 static int timer_msecs = DEFAULT_TIMER_PERIOD;
 module_param(timer_msecs, int, 0660);
 MODULE_PARM_DESC(timer_msecs, "Timer resolution in msecs.");
@@ -442,6 +457,25 @@ static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 	}
 
 	return entry;
+}
+
+void lg4ff_send_cmd_with_id(struct lg4ff_device_entry *entry, u8 *cmd, u8 id) {
+	unsigned long flags;
+	s32 *value = entry->report->field[0]->value;
+
+	spin_lock_irqsave(&entry->report_lock, flags);
+	entry->report->id = id;
+	value[0] = cmd[0];
+	value[1] = cmd[1];
+	value[2] = cmd[2];
+	value[3] = cmd[3];
+	value[4] = cmd[4];
+	value[5] = cmd[5];
+	value[6] = cmd[6];
+	hid_hw_request(entry->hid, entry->report, HID_REQ_SET_REPORT);
+	spin_unlock_irqrestore(&entry->report_lock, flags);
+	if (unlikely(profile))
+		DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
 void lg4ff_send_cmd(struct lg4ff_device_entry *entry, u8 *cmd)
@@ -1447,7 +1481,7 @@ static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(cons
 		case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
 			return &lg4ff_mode_switch_ext09_g29;
 		case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
-			return &lg4ff_mode_switch_ext09_g923;
+			return &lg4ff_mode_switch_30_g923;
 		default:
 			return NULL;
 		}
@@ -1489,6 +1523,30 @@ static int lg4ff_switch_compatibility_mode(struct hid_device *hid, const struct 
 			cmd[j] = s->cmd[j + (7*i)];
 
 		lg4ff_send_cmd(entry, cmd);
+	}
+	hid_hw_wait(hid);
+	return 0;
+}
+
+/* For switching from PS mode we need to set report id to 0x30 */
+static int lg4ff_switch_from_ps_mode(struct hid_device *hid, const struct lg4ff_compat_mode_switch *s)
+{
+	struct lg4ff_device_entry *entry;
+	u8 cmd[7];
+	u8 i;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	for (i = 0; i < s->cmd_count; i++) {
+		u8 j;
+
+		for (j = 0; j < 7; j++)
+			cmd[j] = s->cmd[j + (7*i)];
+
+		lg4ff_send_cmd_with_id(entry, cmd, 0x30);
 	}
 	hid_hw_wait(hid);
 	return 0;
@@ -2126,6 +2184,27 @@ static int lg4ff_handle_multimode_wheel(struct hid_device *hid, u16 *real_produc
 		if (ret) {
 			/* Wheel could not have been switched to native mode,
 			 * leave it in "Driving Force" mode and continue */
+			hid_err(hid, "Unable to switch wheel mode, errno %d\n", ret);
+			return LG4FF_MMODE_IS_MULTIMODE;
+		}
+		return LG4FF_MMODE_SWITCHED;
+	}
+
+	/* Switch from "G923 PS" mode to native mode automatically.
+	 * Otherwise keep the wheel in its current mode */
+	if ((reported_product_id == USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL) &&
+		reported_product_id != *real_product_id &&
+		!lg4ff_no_autoswitch) {
+		const struct lg4ff_compat_mode_switch *s = &lg4ff_mode_switch_30_g923;
+		if (!s) {
+			hid_err(hid, "Invalid product id %X\n", *real_product_id);
+			return LG4FF_MMODE_NOT_MULTIMODE;
+		}
+
+		ret = lg4ff_switch_from_ps_mode(hid, s);
+		if (ret) {
+			/* Wheel could not have been switched to Classic mode,
+			 * leave it in "PS" mode and continue */
 			hid_err(hid, "Unable to switch wheel mode, errno %d\n", ret);
 			return LG4FF_MMODE_IS_MULTIMODE;
 		}
