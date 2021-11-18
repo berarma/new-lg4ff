@@ -2182,9 +2182,14 @@ static int lg4ff_handle_multimode_wheel(struct hid_device *hid, u16 *real_produc
 	}
 
 	/* Switch from "G923 PS" mode to native mode automatically. */
+	/* Users could use lg4ff_no_autoswitch option if they want to manually change modes */
 	if ((reported_product_id == USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL) &&
 		reported_product_id != *real_product_id) {
 		const struct lg4ff_compat_mode_switch *s = &lg4ff_mode_switch_30_g923;
+		if (lg4ff_no_autoswitch) {
+			hid_err(hid, "This device should switch mode. Load the \"hid_logitech\" module with \"lg4ff_no_autoswitch=0\" parameter set and try again.\n");
+			return -EINVAL;
+		}
 		if (!s) {
 			hid_err(hid, "Invalid product id %X\n", *real_product_id);
 			return LG4FF_MMODE_NOT_MULTIMODE;
