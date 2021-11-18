@@ -258,10 +258,10 @@ static const struct lg4ff_multimode_wheel lg4ff_multimode_wheels[] = {
 	 LG4FF_MODE_NATIVE | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
 	 LG4FF_G29_TAG, LG4FF_G29_NAME},
 	{USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL,
-	 LG4FF_MODE_G923_PS,
+	 LG4FF_MODE_G923_PS | LG4FF_MODE_G923,
 	 LG4FF_G923_PS_TAG, LG4FF_G923_PS_NAME},
 	{USB_DEVICE_ID_LOGITECH_G923_WHEEL,
-	 LG4FF_MODE_NATIVE | LG4FF_MODE_G923 | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
+	 LG4FF_MODE_G923,
 	 LG4FF_G923_TAG, LG4FF_G923_NAME},
 };
 
@@ -321,7 +321,7 @@ static const struct lg4ff_wheel_ident_info lg4ff_g29_ident_info2 = {
 };
 
 static const struct lg4ff_wheel_ident_info lg4ff_g923_ident_info = {
-	LG4FF_MODE_G923_PS | LG4FF_MODE_G923 | LG4FF_MODE_G29 | LG4FF_MODE_G27 | LG4FF_MODE_G25 | LG4FF_MODE_DFGT | LG4FF_MODE_DFP | LG4FF_MODE_DFEX,
+	LG4FF_MODE_G923_PS | LG4FF_MODE_G923,
 	0xff00,
 	0x3800,
 	USB_DEVICE_ID_LOGITECH_G923_WHEEL
@@ -1468,20 +1468,11 @@ static const struct lg4ff_compat_mode_switch *lg4ff_get_mode_switch_command(cons
 			return NULL;
 		}
 		break;
-	case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
+	case USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL:
 		switch (target_product_id) {
-		case USB_DEVICE_ID_LOGITECH_DFP_WHEEL:
-			return &lg4ff_mode_switch_ext09_dfp;
-		case USB_DEVICE_ID_LOGITECH_DFGT_WHEEL:
-			return &lg4ff_mode_switch_ext09_dfgt;
-		case USB_DEVICE_ID_LOGITECH_G25_WHEEL:
-			return &lg4ff_mode_switch_ext09_g25;
-		case USB_DEVICE_ID_LOGITECH_G27_WHEEL:
-			return &lg4ff_mode_switch_ext09_g27;
-		case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
-			return &lg4ff_mode_switch_ext09_g29;
 		case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
 			return &lg4ff_mode_switch_30_g923;
+		/* We can only switch from PS mode to Classic. */
 		default:
 			return NULL;
 		}
@@ -2190,11 +2181,9 @@ static int lg4ff_handle_multimode_wheel(struct hid_device *hid, u16 *real_produc
 		return LG4FF_MMODE_SWITCHED;
 	}
 
-	/* Switch from "G923 PS" mode to native mode automatically.
-	 * Otherwise keep the wheel in its current mode */
+	/* Switch from "G923 PS" mode to native mode automatically. */
 	if ((reported_product_id == USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL) &&
-		reported_product_id != *real_product_id &&
-		!lg4ff_no_autoswitch) {
+		reported_product_id != *real_product_id) {
 		const struct lg4ff_compat_mode_switch *s = &lg4ff_mode_switch_30_g923;
 		if (!s) {
 			hid_err(hid, "Invalid product id %X\n", *real_product_id);
