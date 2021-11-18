@@ -475,7 +475,7 @@ void lg4ff_send_cmd_with_id(struct lg4ff_device_entry *entry, u8 *cmd, u8 id) {
 	hid_hw_request(entry->hid, entry->report, HID_REQ_SET_REPORT);
 	spin_unlock_irqrestore(&entry->report_lock, flags);
 	if (unlikely(profile))
-		DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
+		hid_info(entry->hid, "send_cmd: %02X %02X %02X %02X %02X %02X %02X %02X\n", id, cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
 void lg4ff_send_cmd(struct lg4ff_device_entry *entry, u8 *cmd)
