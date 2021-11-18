@@ -13,11 +13,11 @@ Supported devices:
 - Logitech Driving Force GT (tested)
 - Logitech G27 Racing Wheel (tested)
 - Logitech G29 Driving Force (tested)
+- Logitech G923 Racing Wheel for Playstation 4 and PC (046d:c267, 046d:c266)
 - Logitech MOMO Racing
 - Logitech Speed Force Wireless Wheel for Wii
 
-This module is not compatible with the Logitech G920 Driving Force that already
-has full effects support implemented by firmware and uses the HID++ driver.
+This module is not compatible with the Logitech G920 Driving Force and Logitech G923 for XBOX and PC (046d:c26d, 046d:c26e), that already has full effects support implemented by firmware and uses the HID++ driver.
 
 Reports on success or failure using this module on untested devices are
 welcome.
