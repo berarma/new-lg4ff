@@ -807,7 +807,7 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
-	parameters[0].level = (int)parameters[0].level * (int)gain / 0xffff;
+	parameters[0].level = (long)parameters[0].level * gain / 0xffff;
 	parameters[1].clip = parameters[1].clip * spring_level / 100;
 	parameters[2].clip = parameters[2].clip * damper_level / 100;
 	parameters[3].clip = parameters[3].clip * friction_level / 100;
