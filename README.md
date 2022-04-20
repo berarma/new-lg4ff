@@ -69,13 +69,15 @@ the install step.
 In case you want to rebuild the module, remove it and install again:
 
 ```
-$ sudo dkms remove new-lg4ff/0.3 --all
+$ sudo dkms remove new-lg4ff/<version> --all
 $ sudo dkms install /usr/src/new-lg4ff
 ```
 
-When using DKMS the module will be installed as `hid-logitech` so it gets to
-automatically replace the old module. Once loaded, it will be displayed as
-`hid-logitech-new` though.
+Replace ` <version>` with the version you want to remove.
+
+When using DKMS the module will be installed as `hid-logitech` so it gets
+to automatically replace the old module. Once loaded, it will be displayed
+as `hid-logitech-new` though.
 
 NOTE: If you had previously installed the module using the manual method then
 you must delete the module by hand: `$ sudo rm /lib/modules/$(uname
