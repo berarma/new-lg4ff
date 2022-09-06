@@ -2,6 +2,9 @@
 
 Improved Linux module driver for Logitech driving wheels.
 
+Thanks to Oleg Makarenko for adding support for the Logitech G923 Racing
+Wheel (PS4/PC version).
+
 Supported devices:
 
 - Logitech WingMan Formula GP (without force feedback)
@@ -13,7 +16,8 @@ Supported devices:
 - Logitech Driving Force GT (tested)
 - Logitech G27 Racing Wheel (tested)
 - Logitech G29 Driving Force (tested)
-- Logitech G923 Racing Wheel for Playstation 4 and PC (046d:c267, 046d:c266)
+- Logitech G923 Racing Wheel for Playstation 4 and PC (046d:c267,
+  046d:c266)
 - Logitech MOMO Racing
 - Logitech Speed Force Wireless Wheel for Wii
 
