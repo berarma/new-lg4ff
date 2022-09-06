@@ -17,7 +17,10 @@ Supported devices:
 - Logitech MOMO Racing
 - Logitech Speed Force Wireless Wheel for Wii
 
-This module is not compatible with the Logitech G920 Driving Force and Logitech G923 for XBOX and PC (046d:c26d, 046d:c26e), that already has full effects support implemented by firmware and uses the HID++ driver.
+This module is not compatible with the XBOX/PC versions of the Logitech G920
+Driving Force and Logitech G923 (046d:c26d, 046d:c26e). Both wheels use the
+HID++ protocol and should be supported by the HID++ driver in the kernel but as
+of this writing the driver hasn't yet been patched to add support for the G923.
 
 Reports on success or failure using this module on untested devices are
 welcome.
