@@ -16,15 +16,16 @@ Supported devices:
 - Logitech Driving Force GT (tested)
 - Logitech G27 Racing Wheel (tested)
 - Logitech G29 Driving Force (tested)
-- Logitech G923 Racing Wheel for Playstation 4 and PC (046d:c267,
+- Logitech G923 Racing Wheel for PlayStation 4 and PC (046d:c267,
   046d:c266)
 - Logitech MOMO Racing
 - Logitech Speed Force Wireless Wheel for Wii
 
-This module is not compatible with the XBOX/PC versions of the Logitech G920
-Driving Force and Logitech G923 (046d:c26d, 046d:c26e). Both wheels use the
-HID++ protocol and should be supported by the HID++ driver in the kernel but as
-of this writing the driver hasn't yet been patched to add support for the G923.
+This module is not compatible with the Logitech G920 Driving Force and XBOX/PC
+version of the Logitech G923 (046d:c26d, 046d:c26e). Both wheels use the HID++
+protocol and should be supported by the HID++ driver in the kernel but as of
+this writing the driver hasn't yet been patched to support the Logitech G923
+for XBOX/PC.
 
 Reports on success or failure using this module on untested devices are
 welcome.
@@ -34,16 +35,17 @@ welcome.
 It has all the features in the in-kernel `hid-logitech` module and adds the
 following ones:
 
-- Support for most effects defined in the Linux FF API (except inertia).
+- Support for most effects defined in the Linux FF API (except inertia) rather
+  than just constant the force effect.
 - Asynchronous operations with realtime handling of effects.
 - Rate limited FF updates with best possible latency.
-- Tunable sprint, damper and friction effect types gain.
-- Combine accelerator and clutch.
+- Tunable sprint, damper and friction effects gain.
+- It can combine accelerator and clutch.
 - Use the wheel leds as a FFBmeter to monitor clipping.
 - Added a system gain setting that modulates the gain setting used by
   applications.
 - SYSFS entries for gain, autocenter, spring/damper/friction effect gain and
-   FFBmeter.
+  FFBmeter.
 
 ## Requirements
 
