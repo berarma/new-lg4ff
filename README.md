@@ -13,9 +13,9 @@ Supported devices:
 - Logitech MOMO Force Feedback Racing Wheel
 - Logitech Driving Force Pro
 - Logitech G25 Racing Wheel
-- Logitech Driving Force GT (tested)
-- Logitech G27 Racing Wheel (tested)
-- Logitech G29 Driving Force (tested)
+- Logitech Driving Force GT
+- Logitech G27 Racing Wheel
+- Logitech G29 Driving Force (switch in PS3 mode)
 - Logitech G923 Racing Wheel for PlayStation 4 and PC (046d:c267,
   046d:c266)
 - Logitech MOMO Racing
