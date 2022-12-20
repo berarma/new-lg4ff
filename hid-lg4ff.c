@@ -500,6 +500,8 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 	u8 original_cmd[7];
 	int d1;
 	int d2;
+	int k1;
+	int k2;
 	int s1;
 	int s2;
 
@@ -550,6 +552,18 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 				d2 = SCALE_VALUE_U16(((parameters->d2) + 0x8000) & 0xffff, 11);
 				s1 = parameters->k1 < 0;
 				s2 = parameters->k2 < 0;
+				k1 = abs(parameters->k1);
+				k2 = abs(parameters->k2);
+				if (k1 < 2048) {
+					d1 = 0;
+				} else {
+					k1 -= 2048;
+				}
+				if (k2 < 2048) {
+					d2 = 2047;
+				} else {
+					k2 -= 2048;
+				}
 				slot->current_cmd[1] = 0x0b;
 				slot->current_cmd[2] = d1 >> 3;
 				slot->current_cmd[3] = d2 >> 3;
