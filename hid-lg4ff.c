@@ -691,29 +691,21 @@ static __always_inline int lg4ff_calculate_periodic(struct lg4ff_effect_state *s
 static __always_inline void lg4ff_calculate_spring(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
 {
 	struct ff_condition_effect *condition = &state->effect.u.condition[0];
-	int d1;
-	int d2;
 
-	d1 = condition->center - condition->deadband / 2;
-	d2 = condition->center + condition->deadband / 2;
-	if (d1 < parameters->d1) {
-		parameters->d1 = d1;
-	}
-	if (d2 > parameters->d2) {
-		parameters->d2 = d2;
-	}
-	parameters->k1 += condition->left_coeff;
-	parameters->k2 += condition->right_coeff;
-	parameters->clip = max(parameters->clip, (unsigned)max(condition->left_saturation, condition->right_saturation));
+	parameters->d1 = ((int)condition->center) - condition->deadband / 2;
+	parameters->d2 = ((int)condition->center) + condition->deadband / 2;
+	parameters->k1 = condition->left_coeff;
+	parameters->k2 = condition->right_coeff;
+	parameters->clip = (unsigned)max(condition->left_saturation, condition->right_saturation);
 }
 
 static __always_inline void lg4ff_calculate_resistance(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
 {
 	struct ff_condition_effect *condition = &state->effect.u.condition[0];
 
-	parameters->k1 += condition->left_coeff;
-	parameters->k2 += condition->right_coeff;
-	parameters->clip = max(parameters->clip, (unsigned)max(condition->left_saturation, condition->right_saturation));
+	parameters->k1 = condition->left_coeff;
+	parameters->k2 = condition->right_coeff;
+	parameters->clip = (unsigned)max(condition->left_saturation, condition->right_saturation);
 }
 
 static __always_inline struct ff_envelope *lg4ff_effect_envelope(struct ff_effect *effect)
