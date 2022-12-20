@@ -873,8 +873,8 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 
 	ffb_level = abs(parameters[0].level);
 	for (i = 1; i < 4; i++) {
-		parameters[i].k1 = parameters[i].k1 * gain / 0xffff;
-		parameters[i].k2 = parameters[i].k2 * gain / 0xffff;
+		parameters[i].k1 = (long)parameters[i].k1 * gain / 0xffff;
+		parameters[i].k2 = (long)parameters[i].k2 * gain / 0xffff;
 		parameters[i].clip = parameters[i].clip * gain / 0xffff;
 		ffb_level += parameters[i].clip * 0x7fff / 0xffff;
 	}
