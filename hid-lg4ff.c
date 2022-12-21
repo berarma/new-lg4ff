@@ -743,10 +743,10 @@ static __always_inline void lg4ff_update_state(struct lg4ff_effect_state *state,
 
 	if (__test_and_clear_bit(FF_EFFECT_UPDATING, &state->flags)) {
 		__clear_bit(FF_EFFECT_PLAYING, &state->flags);
-		state->play_at = state->start_at + effect->replay.delay;
+		state->play_at = state->updated_at + effect->replay.delay;
 		state->direction_gain = fixp_sin16(effect->direction * 360 / 0x10000);
 		if (effect->replay.length) {
-			state->stop_at = state->play_at + effect->replay.length;
+			state->stop_at = state->updated_at + effect->replay.length;
 		}
 		if (effect->type == FF_PERIODIC) {
 			state->phase_adj = state->phase;
