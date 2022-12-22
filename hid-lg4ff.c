@@ -696,7 +696,7 @@ static __always_inline void lg4ff_calculate_spring(struct lg4ff_effect_state *st
 	parameters->d2 = ((int)condition->center) + condition->deadband / 2;
 	parameters->k1 = condition->left_coeff;
 	parameters->k2 = condition->right_coeff;
-	parameters->clip = (unsigned)max(condition->left_saturation, condition->right_saturation);
+	parameters->clip = (unsigned)condition->right_saturation;
 }
 
 static __always_inline void lg4ff_calculate_resistance(struct lg4ff_effect_state *state, struct lg4ff_effect_parameters *parameters)
@@ -705,7 +705,7 @@ static __always_inline void lg4ff_calculate_resistance(struct lg4ff_effect_state
 
 	parameters->k1 = condition->left_coeff;
 	parameters->k2 = condition->right_coeff;
-	parameters->clip = (unsigned)max(condition->left_saturation, condition->right_saturation);
+	parameters->clip = (unsigned)condition->right_saturation);
 }
 
 static __always_inline struct ff_envelope *lg4ff_effect_envelope(struct ff_effect *effect)
