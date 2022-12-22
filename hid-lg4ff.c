@@ -567,7 +567,7 @@ void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *
 				slot->current_cmd[1] = 0x0b;
 				slot->current_cmd[2] = d1 >> 3;
 				slot->current_cmd[3] = d2 >> 3;
-				slot->current_cmd[4] = (SCALE_COEFF(parameters->k2, 4) << 4) + SCALE_COEFF(parameters->k1, 4);
+				slot->current_cmd[4] = (SCALE_COEFF(k2, 4) << 4) + SCALE_COEFF(k1, 4);
 				slot->current_cmd[5] = ((d2 & 7) << 5) + ((d1 & 7) << 1) + (s2 << 4) + s1;
 				slot->current_cmd[6] = SCALE_VALUE_U16(parameters->clip, 8);
 				break;
