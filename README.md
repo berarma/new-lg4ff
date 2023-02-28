@@ -23,9 +23,7 @@ Supported devices:
 
 This module is not compatible with the Logitech G920 Driving Force and XBOX/PC
 version of the Logitech G923 (046d:c26d, 046d:c26e). Both wheels use the HID++
-protocol and should be supported by the HID++ driver in the kernel but as of
-this writing the driver hasn't yet been patched to support the Logitech G923
-for XBOX/PC.
+protocol and are supported by the HID++ driver as of kernel 6.3.
 
 Reports on success or failure using this module on untested devices are
 welcome.
