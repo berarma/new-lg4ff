@@ -1014,10 +1014,6 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 		return -EINVAL;
 	}
 
-	if (effect->type == FF_PERIODIC && effect->u.periodic.period == 0) {
-		return -EINVAL;
-	}
-
 	state = &entry->states[effect->id];
 
 	if (test_bit(FF_EFFECT_STARTED, &state->flags) && effect->type != state->effect.type) {
@@ -1027,6 +1023,11 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 	spin_lock_irqsave(&entry->timer_lock, flags);
 
 	state->effect = *effect;
+
+	if (effect->type == FF_PERIODIC && effect->u.periodic.period == 0) {
+		state->effect.u.periodic.period = 1;
+		state->effect.u.periodic.magnitude = 0;
+	}
 
 	if (test_bit(FF_EFFECT_STARTED, &state->flags)) {
 		__set_bit(FF_EFFECT_UPDATING, &state->flags);
