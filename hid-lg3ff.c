@@ -3,6 +3,7 @@
  *  Force feedback support for Logitech Flight System G940
  *
  *  Copyright (c) 2009 Gary Stein <LordCnidarian@gmail.com>
+ *  Copyright (c) 2024 Heiko Schmitt <frostregen@frostregen.org>
  */
 
 /*
@@ -13,6 +14,8 @@
 #include <linux/hid.h>
 
 #include "hid-lg.h"
+
+#define LG3FF_VERSION "0.2.1"
 
 /*
  * G940 Theory of Operation (from experimentation)
@@ -95,15 +98,41 @@ static void hid_lg3ff_set_autocenter(struct input_dev *dev, u16 magnitude)
  * NOTE: deadman's switch on G940 must be covered
  * for effects to work
  */
+ 	/* De-activate Auto-Center */
+	if (magnitude == 0) {
+		report->field[0]->value[0] = 0x51;
+		report->field[0]->value[1] = 0x00;
+		report->field[0]->value[2] = 0x00;
+		report->field[0]->value[3] = 0x00;
+		report->field[0]->value[4] = 0x00;
+		report->field[0]->value[31] = 0x00;
+		report->field[0]->value[32] = 0x00;
+		report->field[0]->value[33] = 0x00;
+		report->field[0]->value[34] = 0x00;
+
+		hid_hw_request(hid, report, HID_REQ_SET_REPORT);
+		return;
+	}
+	
+	/* Activate Auto-Center, with given magnitude */
+	// Source is 0 to 0xFFFF Range is 0 to 127
+	unsigned char value = (magnitude >> 9);
 	report->field[0]->value[0] = 0x51;
-	report->field[0]->value[1] = 0x00;
-	report->field[0]->value[2] = 0x00;
-	report->field[0]->value[3] = 0x7F;
-	report->field[0]->value[4] = 0x7F;
-	report->field[0]->value[31] = 0x00;
-	report->field[0]->value[32] = 0x00;
-	report->field[0]->value[33] = 0x7F;
-	report->field[0]->value[34] = 0x7F;
+	// X Axis Setup
+	report->field[0]->value[1] = (unsigned char)(0);
+	report->field[0]->value[2] = (unsigned char)(0);
+	// Needs to be set to 127
+	report->field[0]->value[3] = (unsigned char)(127);
+	// 64 seems to center SOFT
+	// 127 seems to center HARD
+	report->field[0]->value[4] = value;
+	
+	// Y Axis setup
+	report->field[0]->value[31] = (unsigned char)(0);
+	report->field[0]->value[32] = (unsigned char)(0);
+	// Needs to be set to 127
+	report->field[0]->value[33] = (unsigned char)(127);
+	report->field[0]->value[34] = value;
 
 	hid_hw_request(hid, report, HID_REQ_SET_REPORT);
 }
@@ -145,7 +174,7 @@ int lg3ff_init(struct hid_device *hid)
 	if (test_bit(FF_AUTOCENTER, dev->ffbit))
 		dev->ff->set_autocenter = hid_lg3ff_set_autocenter;
 
-	hid_info(hid, "Force feedback for Logitech Flight System G940 by Gary Stein <LordCnidarian@gmail.com>\n");
+	hid_info(hid, "Force feedback support for Logitech Flight System G940 (%s)\n", LG3FF_VERSION);
 	return 0;
 }
 
