@@ -810,7 +810,8 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 
 	memset(parameters, 0, sizeof(parameters));
 
-	gain = (unsigned)entry->wdata.master_gain * entry->wdata.gain / 0xffff;
+	// Use a 8bit gain value to avoid 64bit arithmetic later
+	gain = ((entry->wdata.master_gain / 0xff) * (entry->wdata.gain / 0xff) + entry->wdata.master_gain / 0xff + entry->wdata.gain / 0xff) / 0x100;
 
 	spin_lock_irqsave(&entry->timer_lock, flags);
 
@@ -872,16 +873,19 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
-	parameters[0].level = (long)parameters[0].level * gain / 0xffff;
+	// Level might be the sum of several forces and add up to more than a
+	// 16bit value but less than 24bit.
+	// Here we avoid 64bit arithmetic by using an 8bit gain value.
+	parameters[0].level = parameters[0].level * gain / 0xff;
 	parameters[1].clip = parameters[1].clip * spring_level / 100;
 	parameters[2].clip = parameters[2].clip * damper_level / 100;
 	parameters[3].clip = parameters[3].clip * friction_level / 100;
 
 	ffb_level = abs(parameters[0].level);
 	for (i = 1; i < 4; i++) {
-		parameters[i].k1 = (long)parameters[i].k1 * gain / 0xffff;
-		parameters[i].k2 = (long)parameters[i].k2 * gain / 0xffff;
-		parameters[i].clip = parameters[i].clip * gain / 0xffff;
+		parameters[i].k1 = parameters[i].k1 * gain / 0xff;
+		parameters[i].k2 = parameters[i].k2 * gain / 0xff;
+		parameters[i].clip = parameters[i].clip * gain / 0xff;
 		ffb_level += parameters[i].clip * 0x7fff / 0xffff;
 	}
 	if (ffb_level > entry->peak_ffb_level) {
