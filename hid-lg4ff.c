@@ -2374,7 +2374,7 @@ int lg4ff_init(struct hid_device *hid)
 			hid_warn(hid, "Unable to create sysfs interface for \"alternate_modes\", errno %d\n", error);
 	}
 
-	if (dev->ffbit) {
+	if (test_bit(FF_CONSTANT, dev->ffbit)) {
 		error = device_create_file(&hid->dev, &dev_attr_gain);
 		if (error)
 			hid_warn(hid, "Unable to create sysfs interface for \"gain\", errno %d\n", error);
@@ -2468,7 +2468,7 @@ int lg4ff_deinit(struct hid_device *hid)
 	device_remove_file(&hid->dev, &dev_attr_combine_pedals);
 	device_remove_file(&hid->dev, &dev_attr_range);
 
-	if (dev->ffbit) {
+	if (test_bit(FF_CONSTANT, dev->ffbit)) {
 		device_remove_file(&hid->dev, &dev_attr_gain);
 		if (test_bit(FF_AUTOCENTER, dev->ffbit)) {
 			device_remove_file(&hid->dev, &dev_attr_autocenter);
