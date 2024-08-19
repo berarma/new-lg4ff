@@ -206,6 +206,12 @@ get and set property values.
 This entry already existed. It has been extended, setting the value to 2
 combines the clutch and gas pedals in the same axis.
 
+### play_on_upload
+
+BeamNG.drive has a "Fast" update type that skips play effect events entirely
+and expects the wheel to just play effects on upload. Set this to 1 to play
+effects on upload for applications with this behavior.
+
 ### gain
 
 Get/set the global FF gain (0-65535). This property is independent of the gain
