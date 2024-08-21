@@ -208,9 +208,12 @@ combines the clutch and gas pedals in the same axis.
 
 ### play_on_upload
 
-BeamNG.drive has a "Fast" update type that skips play effect events entirely
-and expects the wheel to just play effects on upload. Set this to 1 to play
-effects on upload for applications with this behavior.
+Some applications expect the wheel to just play effects on upload. For
+instance, when using BeamNG.drive 'Fast' update type through Wine, BeamNG.drive
+would get confused by Wine reporting all effects are playing at all times,
+hence never issue effect playback. While in reality no effects are playing,
+and the actual playback state is lost in translation. Set this to 1 to
+play effects on upload to workaround such situations.
 
 ### gain
 
