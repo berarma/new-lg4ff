@@ -28,6 +28,9 @@
 #define LG4FF_MMODE_SWITCHED 1
 #define LG4FF_MMODE_NOT_MULTIMODE 2
 
+/* Device has a "friction" effect in firmware */
+#define LG4FF_CAP_FRICTION 1
+
 #define LG4FF_MODE_NATIVE_IDX 0
 #define LG4FF_MODE_DFEX_IDX 1
 #define LG4FF_MODE_DFP_IDX 2
@@ -109,6 +112,7 @@ struct lg4ff_effect_state {
 	unsigned int cmd_start_count;
 	int direction_gain;
 	int slope;
+	unsigned int slot;
 };
 
 struct lg4ff_effect_parameters {
@@ -146,6 +150,7 @@ struct lg4ff_wheel_data {
 	const char * const real_tag;
 	const char * const real_name;
 	const u16 real_product_id;
+	const u16 capabilities;
 
 	void (*set_range)(struct hid_device *hid, u16 range);
 };
@@ -180,6 +185,7 @@ static const signed short lg4ff_wheel_effects[] = {
 	FF_SAW_DOWN,
 	FF_RAMP,
 	FF_FRICTION,
+	FF_INERTIA,
 	-1
 };
 
@@ -192,6 +198,7 @@ struct lg4ff_wheel {
 	const signed short *ff_effects;
 	const u16 min_range;
 	const u16 max_range;
+	const u16 capabilities;
 	void (*set_range)(struct hid_device *hid, u16 range);
 };
 
@@ -227,18 +234,30 @@ static void lg4ff_set_leds(struct hid_device *hid, u8 leds);
 #endif
 
 static const struct lg4ff_wheel lg4ff_devices[] = {
-	{USB_DEVICE_ID_LOGITECH_WINGMAN_FG,  no_wheel_effects,    40, 180, NULL},
-	{USB_DEVICE_ID_LOGITECH_WINGMAN_FFG, lg4ff_wheel_effects, 40, 180, NULL},
-	{USB_DEVICE_ID_LOGITECH_WHEEL,       lg4ff_wheel_effects, 40, 270, NULL},
-	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL,  lg4ff_wheel_effects, 40, 270, NULL},
-	{USB_DEVICE_ID_LOGITECH_DFP_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_dfp},
-	{USB_DEVICE_ID_LOGITECH_G25_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_DFGT_WHEEL,  lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_G27_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_G29_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_G923_WHEEL,  lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL2, lg4ff_wheel_effects, 40, 270, NULL},
-	{USB_DEVICE_ID_LOGITECH_WII_WHEEL,   lg4ff_wheel_effects, 40, 270, NULL}
+	{USB_DEVICE_ID_LOGITECH_WINGMAN_FG,
+		no_wheel_effects,    40, 180, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_WINGMAN_FFG,
+		lg4ff_wheel_effects, 40, 180, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_WHEEL,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_DFP_WHEEL,
+		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_dfp},
+	{USB_DEVICE_ID_LOGITECH_G25_WHEEL,
+		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_DFGT_WHEEL,
+		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_G27_WHEEL,
+		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_G29_WHEEL,
+		lg4ff_wheel_effects, 40, 900, 0,                  lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_G923_WHEEL,
+		lg4ff_wheel_effects, 40, 900, 0,                  lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL2,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_WII_WHEEL,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL}
 };
 
 static const struct lg4ff_multimode_wheel lg4ff_multimode_wheels[] = {
@@ -518,7 +537,7 @@ static void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_param
 			slot->cmd_op = 0xc;
 		}
 	} else {
-		if (parameters->clip == 0) {
+		if (parameters->clip == 0 || slot->effect_type == 0) {
 			slot->cmd_op = 3;
 		} else if (slot->cmd_op == 3) {
 			slot->cmd_op = 1;
@@ -859,28 +878,38 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 				parameters[0].level += lg4ff_calculate_periodic(state);
 				break;
 			case FF_SPRING:
-				lg4ff_calculate_spring(state, &parameters[1]);
+				if (state->slot != 0) {
+					lg4ff_calculate_spring(state, &parameters[state->slot]);
+				}
 				break;
 			case FF_DAMPER:
-				lg4ff_calculate_resistance(state, &parameters[2]);
-				break;
 			case FF_FRICTION:
-				lg4ff_calculate_resistance(state, &parameters[3]);
-				break;
+			case FF_INERTIA:
+				if (state->slot != 0) {
+					lg4ff_calculate_resistance(state, &parameters[state->slot]);
+				}
 		}
 	}
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
 	parameters[0].level = (long)parameters[0].level * gain / 0xffff;
-	parameters[1].clip = parameters[1].clip * spring_level / 100;
-	parameters[2].clip = parameters[2].clip * damper_level / 100;
-	parameters[3].clip = parameters[3].clip * friction_level / 100;
 
 	ffb_level = abs(parameters[0].level);
 	for (i = 1; i < 4; i++) {
 		parameters[i].k1 = (long)parameters[i].k1 * gain / 0xffff;
 		parameters[i].k2 = (long)parameters[i].k2 * gain / 0xffff;
+		switch (entry->slots[i].effect_type) {
+			case FF_SPRING:
+				parameters[i].clip = parameters[i].clip * spring_level / 100;
+				break;
+			case FF_DAMPER:
+				parameters[i].clip = parameters[i].clip * damper_level / 100;
+				break;
+			case FF_FRICTION:
+				parameters[i].clip = parameters[i].clip * friction_level / 100;
+				break;
+		}
 		parameters[i].clip = parameters[i].clip * gain / 0xffff;
 		ffb_level += parameters[i].clip * 0x7fff / 0xffff;
 	}
@@ -981,9 +1010,6 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry)
 	memset(&parameters, 0, sizeof(parameters));
 
 	entry->slots[0].effect_type = FF_CONSTANT;
-	entry->slots[1].effect_type = FF_SPRING;
-	entry->slots[2].effect_type = FF_DAMPER;
-	entry->slots[3].effect_type = FF_FRICTION;
 
 	for (i = 0; i < 4; i++) {
 		entry->slots[i].id = i;
@@ -1045,6 +1071,7 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 	struct lg4ff_effect_state *state;
 	unsigned long now = JIFFIES2MS(jiffies);
 	unsigned long flags;
+	int i;
 
 	entry = lg4ff_get_device_entry(hid);
 	if (entry == NULL) {
@@ -1065,6 +1092,25 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 				if (unlikely(profile))
 					DEBUG("Start timer.");
 			}
+			if ((state->effect.type == FF_SPRING || state->effect.type == FF_DAMPER
+					|| state->effect.type == FF_FRICTION || state->effect.type == FF_INERTIA)
+					&& state->slot == 0) {
+				/* Find a free slot */
+				for (i = 1; i < 4 && entry->slots[i].effect_type != 0; i++);
+				if (i < 4) {
+					state->slot = i;
+					entry->slots[i].effect_type = state->effect.type;
+
+					/* Cast unsupported effect types to "damper": this is what the Windows
+					* driver does.
+					* This is not physically plausible, but we are working with toy-strength
+					* wheels that won't let you feel more than "big value = wheel stuck" */
+					if (state->effect.type == FF_INERTIA
+							|| (state->effect.type == FF_FRICTION && !(entry->wdata.capabilities & LG4FF_CAP_FRICTION))) {
+						entry->slots[i].effect_type = FF_DAMPER;
+					}
+				}
+			}
 		}
 		__set_bit(FF_EFFECT_STARTED, &state->flags);
 		state->start_at = now;
@@ -1073,6 +1119,10 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 		if (test_bit(FF_EFFECT_STARTED, &state->flags)) {
 			STOP_EFFECT(state);
 			entry->effects_used--;
+			if (state->slot) {
+				entry->slots[state->slot].effect_type = 0;
+				state->slot = 0;
+			}
 		}
 	}
 
@@ -1226,7 +1276,8 @@ static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const s
 						     .set_range = wheel->set_range,
 						     .alternate_modes = alternate_modes,
 						     .real_tag = real_tag,
-						     .real_name = real_name };
+						     .real_name = real_name,
+						     .capabilities = wheel->capabilities };
 
 		memcpy(wdata, &t_wdata, sizeof(t_wdata));
 	}
@@ -2396,7 +2447,7 @@ int lg4ff_init(struct hid_device *hid)
 			if (error)
 				hid_warn(hid, "Unable to create sysfs interface for \"damper_level\", errno %d\n", error);
 		}
-		if (test_bit(FF_FRICTION, dev->ffbit)) {
+		if (test_bit(FF_FRICTION, dev->ffbit) && (entry->wdata.capabilities & LG4FF_CAP_FRICTION)) {
 			error = device_create_file(&hid->dev, &dev_attr_friction_level);
 			if (error)
 				hid_warn(hid, "Unable to create sysfs interface for \"friction_level\", errno %d\n", error);
@@ -2480,7 +2531,8 @@ int lg4ff_deinit(struct hid_device *hid)
 		if (test_bit(FF_DAMPER, dev->ffbit)) {
 			device_remove_file(&hid->dev, &dev_attr_damper_level);
 		}
-		if (test_bit(FF_FRICTION, dev->ffbit)) {
+		if (test_bit(FF_FRICTION, dev->ffbit)
+				&& (entry->wdata.capabilities & LG4FF_CAP_FRICTION)) {
 			device_remove_file(&hid->dev, &dev_attr_friction_level);
 		}
 	}
