@@ -28,6 +28,9 @@
 #define LG4FF_MMODE_SWITCHED 1
 #define LG4FF_MMODE_NOT_MULTIMODE 2
 
+/* Device has a "friction" effect in firmware */
+#define LG4FF_CAP_FRICTION 1
+
 #define LG4FF_MODE_NATIVE_IDX 0
 #define LG4FF_MODE_DFEX_IDX 1
 #define LG4FF_MODE_DFP_IDX 2
@@ -146,6 +149,7 @@ struct lg4ff_wheel_data {
 	const char * const real_tag;
 	const char * const real_name;
 	const u16 real_product_id;
+	const u16 capabilities;
 
 	void (*set_range)(struct hid_device *hid, u16 range);
 };
@@ -192,6 +196,7 @@ struct lg4ff_wheel {
 	const signed short *ff_effects;
 	const u16 min_range;
 	const u16 max_range;
+	const u16 capabilities;
 	void (*set_range)(struct hid_device *hid, u16 range);
 };
 
@@ -227,18 +232,30 @@ static void lg4ff_set_leds(struct hid_device *hid, u8 leds);
 #endif
 
 static const struct lg4ff_wheel lg4ff_devices[] = {
-	{USB_DEVICE_ID_LOGITECH_WINGMAN_FG,  no_wheel_effects,    40, 180, NULL},
-	{USB_DEVICE_ID_LOGITECH_WINGMAN_FFG, lg4ff_wheel_effects, 40, 180, NULL},
-	{USB_DEVICE_ID_LOGITECH_WHEEL,       lg4ff_wheel_effects, 40, 270, NULL},
-	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL,  lg4ff_wheel_effects, 40, 270, NULL},
-	{USB_DEVICE_ID_LOGITECH_DFP_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_dfp},
-	{USB_DEVICE_ID_LOGITECH_G25_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_DFGT_WHEEL,  lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_G27_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_G29_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_G923_WHEEL,  lg4ff_wheel_effects, 40, 900, lg4ff_set_range_g25},
-	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL2, lg4ff_wheel_effects, 40, 270, NULL},
-	{USB_DEVICE_ID_LOGITECH_WII_WHEEL,   lg4ff_wheel_effects, 40, 270, NULL}
+	{USB_DEVICE_ID_LOGITECH_WINGMAN_FG,
+		no_wheel_effects,    40, 180, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_WINGMAN_FFG,
+		lg4ff_wheel_effects, 40, 180, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_WHEEL,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_DFP_WHEEL,
+		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_dfp},
+	{USB_DEVICE_ID_LOGITECH_G25_WHEEL,
+		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_DFGT_WHEEL,
+		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_G27_WHEEL,
+		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_G29_WHEEL,
+		lg4ff_wheel_effects, 40, 900, 0,                  lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_G923_WHEEL,
+		lg4ff_wheel_effects, 40, 900, 0,                  lg4ff_set_range_g25},
+	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL2,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_WII_WHEEL,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL}
 };
 
 static const struct lg4ff_multimode_wheel lg4ff_multimode_wheels[] = {
@@ -435,6 +452,11 @@ MODULE_PARM_DESC(damper_level, "Level of damper force (0-100).");
 static int friction_level = 30;
 module_param(friction_level, int, 0);
 MODULE_PARM_DESC(friction_level, "Level of friction force (0-100).");
+
+static int always_fake_friction = 0;
+module_param(always_fake_friction, int, 0);
+MODULE_PARM_DESC(always_fake_friction, "Play FF_FRICTION as a damper hardware effect, "
+	"even for wheels that do have a friction hardware effect");
 
 static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 {
@@ -877,6 +899,17 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 	parameters[2].clip = parameters[2].clip * damper_level / 100;
 	parameters[3].clip = parameters[3].clip * friction_level / 100;
 
+	/* Send "friction" input to the "damper" slot if device only has "damper".
+	*  The Windows driver does cast "friction" and "inertia" effect types to "damper".
+	 * This is not physically plausible, but we are working with toy-strength
+	 * wheels that won't let you feel more than "big value = wheel stuck" */
+	if (!(entry->wdata.capabilities & LG4FF_CAP_FRICTION) || always_fake_friction) {
+		if (parameters[2].clip == 0) {
+			memcpy(&parameters[2], &parameters[3], sizeof(parameters[3]));
+		}
+		memset(&parameters[3], 0, sizeof(parameters[3]));
+	}
+
 	ffb_level = abs(parameters[0].level);
 	for (i = 1; i < 4; i++) {
 		parameters[i].k1 = (long)parameters[i].k1 * gain / 0xffff;
@@ -984,7 +1017,6 @@ static void lg4ff_init_slots(struct lg4ff_device_entry *entry)
 	entry->slots[1].effect_type = FF_SPRING;
 	entry->slots[2].effect_type = FF_DAMPER;
 	entry->slots[3].effect_type = FF_FRICTION;
-
 	for (i = 0; i < 4; i++) {
 		entry->slots[i].id = i;
 		lg4ff_update_slot(&entry->slots[i], &parameters);
@@ -1226,7 +1258,8 @@ static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const s
 						     .set_range = wheel->set_range,
 						     .alternate_modes = alternate_modes,
 						     .real_tag = real_tag,
-						     .real_name = real_name };
+						     .real_name = real_name,
+						     .capabilities = wheel->capabilities };
 
 		memcpy(wdata, &t_wdata, sizeof(t_wdata));
 	}
