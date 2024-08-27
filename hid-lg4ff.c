@@ -1037,7 +1037,7 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
 
-	if (entry->wdata.play_on_upload) {
+	if (entry->wdata.play_on_upload && !test_bit(FF_EFFECT_PLAYING, &state->flags)) {
 		lg4ff_play_effect(dev, effect->id, 1);
 	}
 
