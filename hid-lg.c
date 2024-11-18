@@ -20,6 +20,7 @@
 #include <linux/sched.h>
 #include <linux/usb.h>
 #include <linux/wait.h>
+#include <linux/version.h>
 
 #include "usbhid/usbhid.h"
 #include "hid-ids.h"
@@ -427,7 +428,11 @@ static __u8 fg_rdesc_fixed[] = {
  * above the logical maximum described in descriptor. This extends
  * the original value of 0x28c of logical maximum to 0x104d
  */
-static __u8 *lg_report_fixup(struct hid_device *hdev, __u8 *rdesc,
+static
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,12,0)
+const
+#endif
+__u8 *lg_report_fixup(struct hid_device *hdev, __u8 *rdesc,
 		unsigned int *rsize)
 {
 	struct lg_drv_data *drv_data = hid_get_drvdata(hdev);
