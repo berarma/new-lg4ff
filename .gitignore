@@ -6,3 +6,5 @@
 *.ko
 Module.symvers
 modules.order
+.cache
+compile_commands.json
