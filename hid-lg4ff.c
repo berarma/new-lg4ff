@@ -459,7 +459,7 @@ static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 	return entry;
 }
 
-void lg4ff_send_cmd_with_id(struct lg4ff_device_entry *entry, u8 *cmd, u8 id) {
+static void lg4ff_send_cmd_with_id(struct lg4ff_device_entry *entry, u8 *cmd, u8 id) {
 	unsigned long flags;
 	s32 *value = entry->report->field[0]->value;
 
@@ -477,7 +477,7 @@ void lg4ff_send_cmd_with_id(struct lg4ff_device_entry *entry, u8 *cmd, u8 id) {
 	DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X %02X\n", id, cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
-void lg4ff_send_cmd(struct lg4ff_device_entry *entry, u8 *cmd)
+static void lg4ff_send_cmd(struct lg4ff_device_entry *entry, u8 *cmd)
 {
 	unsigned long flags;
 	s32 *value = entry->report->field[0]->value;
@@ -495,7 +495,7 @@ void lg4ff_send_cmd(struct lg4ff_device_entry *entry, u8 *cmd)
 	DEBUG("send_cmd: %02X %02X %02X %02X %02X %02X %02X", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 }
 
-void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
+static void lg4ff_update_slot(struct lg4ff_slot *slot, struct lg4ff_effect_parameters *parameters)
 {
 	u8 original_cmd[7];
 	int d1;
