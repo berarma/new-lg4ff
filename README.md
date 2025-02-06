@@ -70,9 +70,6 @@ Follow these steps:
 
 `$ sudo dkms install /usr/src/new-lg4ff`
 
-Installing the module won't load it into memory. You'll have to load it
-manually or update your initramfs image and reboot.
-
 When using DKMS the module will be installed as `hid-logitech` so it
 automatically replaces the old module. Once loaded, it will be displayed
 as `hid-logitech-new` though.
@@ -81,22 +78,23 @@ NOTE: If you had previously installed the module using the manual method then
 you must delete the module by hand: `$ sudo rm /lib/modules/$(uname
 -r)/extra/hid-logitech-new.ko`
 
-#### Update initramfs image
+#### Update initrd image
 
-DKMS is deprecating the feature to automatically update the initramfs
-image so after a reboot the default module will load instead of the new
-one. It needs to be done manually.
+If you have to load the module manually every time after booting, you need to
+update the initrd image after the module is installed.
 
-Users using the generic initramfs tool can do it with the command:
+Users of distros using `initramfs` can do it with the command:
 
 `sudo update-initramfs -u`
 
+Users of distros using `dracut` can do it with the command:
+
+`sudo dracut -f`
+
 #### Updating
 
-When updating the module, update the code in `/usr/src/new-lg4ff` and repeat
-the install step.
-
-In case you want to rebuild the module, remove it and install again:
+When updating the module, remove the old module, update the code in
+`/usr/src/new-lg4ff` and install again.
 
 ```
 $ sudo dkms remove new-lg4ff/<version> --all
@@ -107,7 +105,9 @@ Replace ` <version>` with the version you want to remove.
 
 ### Manual method
 
-Type the following commands inside the project directory:
+Use only if DKMS doesn't work.
+
+Type the following commands inside the project directory to build and install:
 
 ```
 $ make
