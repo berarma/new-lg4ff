@@ -136,6 +136,7 @@ struct lg4ff_slot {
 struct lg4ff_wheel_data {
 	const u32 product_id;
 	u16 combine;
+	u16 play_on_upload;
 	u16 range;
 	u16 autocenter;
 	u16 master_gain;
@@ -1027,6 +1028,7 @@ static void lg4ff_stop_effects(struct lg4ff_device_entry *entry)
 	lg4ff_send_cmd(entry, cmd);
 }
 
+static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value);
 static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, struct ff_effect *old)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
@@ -1060,6 +1062,10 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 	}
 
 	spin_unlock_irqrestore(&entry->timer_lock, flags);
+
+	if (entry->wdata.play_on_upload && !test_bit(FF_EFFECT_PLAYING, &state->flags)) {
+		lg4ff_play_effect(dev, effect->id, 1);
+	}
 
 	return 0;
 }
@@ -1271,6 +1277,7 @@ static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const s
 		struct lg4ff_wheel_data t_wdata =  { .product_id = wheel->product_id,
 						     .real_product_id = real_product_id,
 						     .combine = 0,
+						     .play_on_upload = 0,
 						     .min_range = wheel->min_range,
 						     .max_range = wheel->max_range,
 						     .set_range = wheel->set_range,
@@ -1758,6 +1765,41 @@ static ssize_t lg4ff_combine_store(struct device *dev, struct device_attribute *
 	return count;
 }
 static DEVICE_ATTR(combine_pedals, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_combine_show, lg4ff_combine_store);
+
+static ssize_t lg4ff_play_on_upload_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	size_t count;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->wdata.play_on_upload);
+	return count;
+}
+
+static ssize_t lg4ff_play_on_upload_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry = lg4ff_get_device_entry(hid);
+	u16 play_on_upload;
+
+	if (entry == NULL) {
+		return -EINVAL;
+	}
+
+	play_on_upload = simple_strtoul(buf, NULL, 10);
+
+	entry->wdata.play_on_upload = play_on_upload ? 1 : 0;
+
+	return count;
+}
+static DEVICE_ATTR(play_on_upload, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_play_on_upload_show, lg4ff_play_on_upload_store);
 
 /* Export the currently set range of the wheel */
 static ssize_t lg4ff_range_show(struct device *dev, struct device_attribute *attr,
@@ -2413,6 +2455,9 @@ int lg4ff_init(struct hid_device *hid)
 	error = device_create_file(&hid->dev, &dev_attr_combine_pedals);
 	if (error)
 		hid_warn(hid, "Unable to create sysfs interface for \"combine\", errno %d\n", error);
+	error = device_create_file(&hid->dev, &dev_attr_play_on_upload);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"play_on_upload\", errno %d\n", error);
 	error = device_create_file(&hid->dev, &dev_attr_range);
 	if (error)
 		hid_warn(hid, "Unable to create sysfs interface for \"range\", errno %d\n", error);
@@ -2517,6 +2562,7 @@ int lg4ff_deinit(struct hid_device *hid)
 	}
 
 	device_remove_file(&hid->dev, &dev_attr_combine_pedals);
+	device_remove_file(&hid->dev, &dev_attr_play_on_upload);
 	device_remove_file(&hid->dev, &dev_attr_range);
 
 	if (test_bit(FF_CONSTANT, dev->ffbit)) {
