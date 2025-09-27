@@ -66,9 +66,8 @@ Follow these steps:
 
 - Install `dkms` from the package manager in your system.
 - Download the project to `/usr/src/new-lg4ff`.
-- Install the module:
-
-`$ sudo dkms install /usr/src/new-lg4ff`
+- Install the module:  
+  `$ sudo dkms install /usr/src/new-lg4ff`
 
 When using DKMS the module will be installed as `hid-logitech` so it
 automatically replaces the old module. Once loaded, it will be displayed
@@ -119,12 +118,41 @@ it's trying to sign the module. These errors can be ignored.
 
 Now the module is installed but not loaded.
 
-To load the module:
-
+To load the module:  
 `$ sudo make load`
 
-To unload the module (restoring the in-kernel module):
+If you have an error, check [Install with Secure Boot](#install-with-secure-boot).
 
+To unload the module (restoring the in-kernel module):  
+`$ sudo make unload`
+
+### Install with Secure Boot
+
+If Secure Boot is enabled on your system, the system will refuse to load the module
+and you may get this kind of error:
+`modprobe: ERROR: could not insert 'hid_logitech_new': Key was rejected by service`.
+This is because the module has not been signed.
+ 
+To compile, install, sign and install the module, follow these steps:
+
+- Install `mokutil` from the package manager in your system.
+- Download the project to `/usr/src/new-lg4ff`.
+- Create signing keys:
+  `$ sudo ./sign_and_install`
+- Input a password of your choice, twice, as asked
+- Reboot your computer. Your UEFI should ask you to enroll the key.
+  Proceed by using the same password as before.
+- Sign and install the driver module:
+  `$ sudo ./sign_and_install`
+
+If the install succeeded, the last message printed should be:
+`[info] hid_logitech_new loaded!`.
+You will have to execute the script again after every kernel update.
+
+To update, just relaunch the install script once:  
+`$ sudo ./sign_and_install`.
+
+To unload the module (restoring the in-kernel module):  
 `$ sudo make unload`
 
 ### Check that the driver is loaded
