@@ -708,6 +708,7 @@ static int lg_input_mapped(struct hid_device *hdev, struct hid_input *hi,
 		case USB_DEVICE_ID_LOGITECH_WINGMAN_FFG:
 		case USB_DEVICE_ID_LOGITECH_WHEEL:
 		case USB_DEVICE_ID_LOGITECH_MOMO_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_RS50_WHEEL:
 		case USB_DEVICE_ID_LOGITECH_DFP_WHEEL:
 		case USB_DEVICE_ID_LOGITECH_G25_WHEEL:
 		case USB_DEVICE_ID_LOGITECH_DFGT_WHEEL:
@@ -767,10 +768,11 @@ static int lg_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	iface = to_usb_interface(hdev->dev.parent);
 	iface_num = iface->cur_altsetting->desc.bInterfaceNumber;
 
-	/* G29 and G923 only work with the 1st interface */
+	/* G29, G923, and RS50 only work with the 1st interface */
 	if ((hdev->product == USB_DEVICE_ID_LOGITECH_G29_WHEEL ||
 		hdev->product == USB_DEVICE_ID_LOGITECH_G923_WHEEL ||
-		hdev->product == USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL) &&
+		hdev->product == USB_DEVICE_ID_LOGITECH_G923_PS_WHEEL ||
+		hdev->product == USB_DEVICE_ID_LOGITECH_RS50_WHEEL) &&
 	    (iface_num != 0)) {
 		dbg_hid("%s: ignoring ifnum %d\n", __func__, iface_num);
 		return -ENODEV;
@@ -843,8 +845,19 @@ static int lg_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	else if (drv_data->quirks & LG_FF4)
 		ret = lg4ff_init(hdev);
 
-	if (ret)
+	/* If force feedback initialization fails, continue with input-only mode
+	 * This allows devices without output reports to still work for input */
+	if (ret && (drv_data->quirks & LG_FF4)) {
+		/* ENODEV from lg4ff_init usually means no inputs on this interface - this is OK */
+		if (ret == -ENODEV) {
+			hid_dbg(hdev, "lg4ff init skipped (no inputs on this interface)\n");
+		} else {
+			hid_warn(hdev, "Force feedback initialization failed (error %d), continuing with input-only mode\n", ret);
+		}
+		ret = 0;  /* Clear error so device still works for input */
+	} else if (ret) {
 		goto err_stop;
+	}
 
 	return 0;
 
@@ -903,6 +916,8 @@ static const struct hid_device_id lg_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_FORCE3D_PRO),
 		.driver_data = LG_FF },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_MOMO_WHEEL),
+		.driver_data = LG_NOGET | LG_FF4 },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_RS50_WHEEL),
 		.driver_data = LG_NOGET | LG_FF4 },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_MOMO_WHEEL2),
 		.driver_data = LG_FF4 },

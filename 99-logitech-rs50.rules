@@ -1,0 +1,14 @@
+# udev rules for Logitech RS50 Racing Wheel
+# Place this file in /etc/udev/rules.d/ or /lib/udev/rules.d/
+#
+# This ensures the RS50 is properly recognized and creates appropriate
+# device nodes with descriptive properties for userspace applications.
+
+# Logitech RS50 Racing Wheel
+KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c276", MODE="0664", GROUP="input", SYMLINK+="input/logitech-rs50"
+
+# Set ID_INPUT_JOYSTICK property for joystick recognition
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c276", ENV{ID_INPUT_JOYSTICK}="1", ENV{ID_INPUT}="1"
+
+# Set descriptive properties
+SUBSYSTEM=="hid", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c276", ENV{HID_PHYS}="usb-*-*", ENV{HID_NAME}="Logitech RS50 Racing Wheel"

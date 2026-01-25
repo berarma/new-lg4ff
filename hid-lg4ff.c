@@ -17,6 +17,8 @@
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 #include <linux/version.h>
+#include <linux/workqueue.h>
+#include <linux/jiffies.h>
 
 #include "usbhid/usbhid.h"
 #include "hid-lg.h"
@@ -67,6 +69,8 @@
 #define LG4FF_G923_PS_NAME "G923 Racing Wheel (Playstation mode)"
 #define LG4FF_DFGT_TAG "DFGT"
 #define LG4FF_DFGT_NAME "Driving Force GT"
+#define LG4FF_RS50_TAG "RS50"
+#define LG4FF_RS50_NAME "RS50 Racing Wheel"
 
 #define LG4FF_FFEX_REV_MAJ 0x21
 #define LG4FF_FFEX_REV_MIN 0x00
@@ -154,6 +158,13 @@ struct lg4ff_wheel_data {
 	void (*set_range)(struct hid_device *hid, u16 range);
 };
 
+struct lg4ff_cmd_work {
+	struct work_struct work;
+	struct hid_device *hid;
+	u8 cmd[7];
+	u8 report_id;
+};
+
 struct lg4ff_device_entry {
 	spinlock_t report_lock; /* Protect output HID report */
 	spinlock_t timer_lock;
@@ -166,6 +177,9 @@ struct lg4ff_device_entry {
 	struct lg4ff_effect_state states[LG4FF_MAX_EFFECTS];
 	unsigned peak_ffb_level;
 	int effects_used;
+	int use_raw_usb; /* Use raw USB/feature reports instead of output report */
+	int working_method; /* Track which communication method works (0=unknown, 1-6=method) */
+	struct lg4ff_cmd_work cmd_work; /* Work queue for safe command sending */
 #ifdef CONFIG_LEDS_CLASS
 	int has_leds;
 #endif
@@ -240,6 +254,8 @@ static const struct lg4ff_wheel lg4ff_devices[] = {
 	{USB_DEVICE_ID_LOGITECH_WHEEL,
 		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
 	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL,
+		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
+	{USB_DEVICE_ID_LOGITECH_RS50_WHEEL,
 		lg4ff_wheel_effects, 40, 270, 0,                  NULL},
 	{USB_DEVICE_ID_LOGITECH_DFP_WHEEL,
 		lg4ff_wheel_effects, 40, 900, LG4FF_CAP_FRICTION, lg4ff_set_range_dfp},
@@ -477,9 +493,201 @@ static struct lg4ff_device_entry *lg4ff_get_device_entry(struct hid_device *hid)
 	return entry;
 }
 
+/* Work function to send commands safely (can sleep) */
+static void lg4ff_send_cmd_work_fn(struct work_struct *work)
+{
+	struct lg4ff_cmd_work *cmd_work = container_of(work, struct lg4ff_cmd_work, work);
+	struct hid_device *hid = cmd_work->hid;
+	struct lg4ff_device_entry *entry = NULL;
+	struct lg_drv_data *drv_data;
+	u8 raw_cmd[8];
+	u8 raw_cmd_with_id[8];
+	int ret;
+	struct usb_device *usbdev;
+
+	if (!hid || !hid_is_usb(hid))
+		return;
+
+	/* Get entry to track working method */
+	drv_data = hid_get_drvdata(hid);
+	if (drv_data)
+		entry = drv_data->device_props;
+
+	usbdev = hid_to_usb_dev(hid);
+
+	/* Build command buffer without report ID */
+	raw_cmd[0] = cmd_work->cmd[0];
+	raw_cmd[1] = cmd_work->cmd[1];
+	raw_cmd[2] = cmd_work->cmd[2];
+	raw_cmd[3] = cmd_work->cmd[3];
+	raw_cmd[4] = cmd_work->cmd[4];
+	raw_cmd[5] = cmd_work->cmd[5];
+	raw_cmd[6] = cmd_work->cmd[6];
+	raw_cmd[7] = 0x00;
+
+	/* Build command buffer with report ID as first byte */
+	raw_cmd_with_id[0] = cmd_work->report_id;
+	raw_cmd_with_id[1] = cmd_work->cmd[0];
+	raw_cmd_with_id[2] = cmd_work->cmd[1];
+	raw_cmd_with_id[3] = cmd_work->cmd[2];
+	raw_cmd_with_id[4] = cmd_work->cmd[3];
+	raw_cmd_with_id[5] = cmd_work->cmd[4];
+	raw_cmd_with_id[6] = cmd_work->cmd[5];
+	raw_cmd_with_id[7] = cmd_work->cmd[6];
+
+	/* If we know which method works, use it directly */
+	if (entry && entry->working_method > 0) {
+		switch (entry->working_method) {
+		case 1:
+			ret = hid_hw_raw_request(hid, cmd_work->report_id, raw_cmd, 7,
+						HID_OUTPUT_REPORT, HID_REQ_SET_REPORT);
+			if (ret >= 0) return;
+			break;
+		case 2:
+			ret = hid_hw_raw_request(hid, cmd_work->report_id, raw_cmd_with_id, 8,
+						HID_OUTPUT_REPORT, HID_REQ_SET_REPORT);
+			if (ret >= 0) return;
+			break;
+		case 3:
+			ret = hid_hw_raw_request(hid, cmd_work->report_id, raw_cmd, 7,
+						HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
+			if (ret >= 0) return;
+			break;
+		case 4:
+			ret = hid_hw_raw_request(hid, cmd_work->report_id, raw_cmd_with_id, 8,
+						HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
+			if (ret >= 0) return;
+			break;
+		case 5:
+			ret = hid_hw_output_report(hid, raw_cmd, 7);
+			if (ret >= 0) return;
+			break;
+		case 6:
+			if (usbdev) {
+				ret = usb_control_msg(usbdev, usb_sndctrlpipe(usbdev, 0),
+						      0x09, USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_OUT,
+						      (HID_OUTPUT_REPORT << 8) | cmd_work->report_id,
+						      0, raw_cmd, 7, HZ);
+				if (ret >= 0) return;
+			}
+			break;
+		}
+		/* Method failed, reset and try all */
+		if (entry) entry->working_method = 0;
+	}
+
+	/* Try different report IDs (0, 1, 2) - RS50 might use a different one */
+	u8 test_report_id;
+	for (test_report_id = 0; test_report_id <= 2; test_report_id++) {
+		/* Method 1: HID_OUTPUT_REPORT without report ID in buffer */
+		ret = hid_hw_raw_request(hid, test_report_id, raw_cmd, 7,
+					HID_OUTPUT_REPORT, HID_REQ_SET_REPORT);
+		if (ret >= 0) {
+			if (entry) {
+				entry->working_method = 1;
+				entry->cmd_work.report_id = test_report_id;
+			}
+			hid_info(hid, "FF method 1 works (output report, no ID, report_id=%d)\n", test_report_id);
+			return;
+		}
+
+		/* Method 2: HID_OUTPUT_REPORT with report ID in buffer */
+		raw_cmd_with_id[0] = test_report_id;
+		ret = hid_hw_raw_request(hid, test_report_id, raw_cmd_with_id, 8,
+					HID_OUTPUT_REPORT, HID_REQ_SET_REPORT);
+		if (ret >= 0) {
+			if (entry) {
+				entry->working_method = 2;
+				entry->cmd_work.report_id = test_report_id;
+			}
+			hid_info(hid, "FF method 2 works (output report, with ID, report_id=%d)\n", test_report_id);
+			return;
+		}
+
+		/* Method 3: HID_FEATURE_REPORT (like Wii wheel) */
+		ret = hid_hw_raw_request(hid, test_report_id, raw_cmd, 7,
+					HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
+		if (ret >= 0) {
+			if (entry) {
+				entry->working_method = 3;
+				entry->cmd_work.report_id = test_report_id;
+			}
+			hid_info(hid, "FF method 3 works (feature report, report_id=%d)\n", test_report_id);
+			return;
+		}
+
+		/* Method 4: HID_FEATURE_REPORT with report ID in buffer */
+		raw_cmd_with_id[0] = test_report_id;
+		ret = hid_hw_raw_request(hid, test_report_id, raw_cmd_with_id, 8,
+					HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
+		if (ret >= 0) {
+			if (entry) {
+				entry->working_method = 4;
+				entry->cmd_work.report_id = test_report_id;
+			}
+			hid_info(hid, "FF method 4 works (feature report, with ID, report_id=%d)\n", test_report_id);
+			return;
+		}
+
+		/* Method 6: Direct USB control transfer (Class-specific request) */
+		if (usbdev) {
+			ret = usb_control_msg(usbdev, usb_sndctrlpipe(usbdev, 0),
+					      0x09, /* HID_SET_REPORT */
+					      USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_OUT,
+					      (HID_OUTPUT_REPORT << 8) | test_report_id,
+					      0, /* interface */
+					      raw_cmd, 7,
+					      HZ);
+			if (ret >= 0) {
+				if (entry) {
+					entry->working_method = 6;
+					entry->cmd_work.report_id = test_report_id;
+				}
+				hid_info(hid, "FF method 6 works (USB control, report_id=%d)\n", test_report_id);
+				return;
+			}
+		}
+	}
+
+	/* Method 5: hid_hw_output_report (interrupt OUT endpoint) - doesn't use report ID */
+	ret = hid_hw_output_report(hid, raw_cmd, 7);
+	if (ret >= 0) {
+		if (entry) entry->working_method = 5;
+		hid_info(hid, "FF method 5 works (interrupt out)\n");
+		return;
+	}
+
+	/* All methods failed - log error only once per session to reduce spam */
+	if (entry && entry->working_method == 0) {
+		static bool error_logged = false;
+		if (!error_logged) {
+			hid_warn(hid, "FF cmd failed (all methods/report IDs): ret=%d (EIO). RS50 may need different protocol.\n", ret);
+			hid_warn(hid, "USB sniffer capture from Windows driver needed to reverse-engineer correct protocol.\n");
+			hid_warn(hid, "Sample command that failed: %02X %02X %02X %02X %02X %02X %02X\n",
+				cmd_work->cmd[0], cmd_work->cmd[1], cmd_work->cmd[2],
+				cmd_work->cmd[3], cmd_work->cmd[4], cmd_work->cmd[5], cmd_work->cmd[6]);
+			error_logged = true;
+		}
+	}
+}
+
 static void lg4ff_send_cmd_with_id(struct lg4ff_device_entry *entry, u8 *cmd, u8 id) {
 	unsigned long flags;
-	s32 *value = entry->report->field[0]->value;
+	s32 *value;
+
+	if (!entry->report) {
+		/* Use work queue for raw USB (RS50) - safe to sleep */
+		if (entry->use_raw_usb && hid_is_usb(entry->hid)) {
+			memcpy(entry->cmd_work.cmd, cmd, 7);
+			entry->cmd_work.report_id = id;
+			entry->cmd_work.hid = entry->hid;
+			schedule_work(&entry->cmd_work.work);
+			return;
+		}
+		return;
+	}
+
+	value = entry->report->field[0]->value;
 
 	spin_lock_irqsave(&entry->report_lock, flags);
 	entry->report->id = id;
@@ -498,7 +706,21 @@ static void lg4ff_send_cmd_with_id(struct lg4ff_device_entry *entry, u8 *cmd, u8
 static void lg4ff_send_cmd(struct lg4ff_device_entry *entry, u8 *cmd)
 {
 	unsigned long flags;
-	s32 *value = entry->report->field[0]->value;
+	s32 *value;
+
+	if (!entry->report) {
+		/* Use work queue for raw USB (RS50) - safe to sleep */
+		if (entry->use_raw_usb && hid_is_usb(entry->hid)) {
+			memcpy(entry->cmd_work.cmd, cmd, 7);
+			entry->cmd_work.report_id = 0;
+			entry->cmd_work.hid = entry->hid;
+			schedule_work(&entry->cmd_work.work);
+			return;
+		}
+		return;
+	}
+
+	value = entry->report->field[0]->value;
 
 	spin_lock_irqsave(&entry->report_lock, flags);
 	value[0] = cmd[0];
@@ -815,6 +1037,10 @@ static __always_inline int lg4ff_timer(struct lg4ff_device_entry *entry)
 	u8 led_states;
 #endif
 
+	/* If no output report and no raw USB, force feedback is disabled - nothing to do */
+	if (!entry->report && !entry->use_raw_usb)
+		return HRTIMER_NORESTART;
+
 	if (timer_mode > 0 && usbhid->outhead != usbhid->outtail) {
 		current_period = timer_msecs;
 		if (timer_mode == 1) {
@@ -1039,6 +1265,11 @@ static int lg4ff_upload_effect(struct input_dev *dev, struct ff_effect *effect, 
 		return -EINVAL;
 	}
 
+	/* If no output report and no raw USB, force feedback is not available */
+	if (!entry->report && !entry->use_raw_usb) {
+		return -ENODEV;
+	}
+
 	if (effect->type == FF_PERIODIC && effect->u.periodic.period == 0) {
 		return -EINVAL;
 	}
@@ -1075,6 +1306,11 @@ static int lg4ff_play_effect(struct input_dev *dev, int effect_id, int value)
 	entry = lg4ff_get_device_entry(hid);
 	if (entry == NULL) {
 		return -EINVAL;
+	}
+
+	/* If no output report and no raw USB, force feedback is not available */
+	if (!entry->report && !entry->use_raw_usb) {
+		return -ENODEV;
 	}
 
 	state = &entry->states[effect_id];
@@ -1199,6 +1435,7 @@ int lg4ff_raw_event(struct hid_device *hdev, struct hid_report *report,
 		case USB_DEVICE_ID_LOGITECH_WINGMAN_FG:
 		case USB_DEVICE_ID_LOGITECH_WINGMAN_FFG:
 		case USB_DEVICE_ID_LOGITECH_MOMO_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_RS50_WHEEL:
 		case USB_DEVICE_ID_LOGITECH_MOMO_WHEEL2:
 			rd[4] = rd[3];
 			rd[5] = 0x7F;
@@ -2289,15 +2526,11 @@ int lg4ff_init(struct hid_device *hid)
 	struct ff_device *ff;
 
 	if (list_empty(&hid->inputs)) {
-		hid_err(hid, "no inputs found\n");
+		hid_dbg(hid, "no inputs found on this interface, skipping lg4ff init\n");
 		return -ENODEV;
 	}
 	hidinput = list_entry(hid->inputs.next, struct hid_input, list);
 	dev = hidinput->input;
-
-	/* Check that the report looks ok */
-	if (!hid_validate_values(hid, HID_OUTPUT_REPORT, 0, 0, 7))
-		return -1;
 
 	drv_data = hid_get_drvdata(hid);
 	if (!drv_data) {
@@ -2310,7 +2543,20 @@ int lg4ff_init(struct hid_device *hid)
 
 	spin_lock_init(&entry->report_lock);
 	entry->hid = hid;
-	entry->report = report;
+	entry->working_method = 0; /* Unknown - will be discovered */
+	INIT_WORK(&entry->cmd_work.work, lg4ff_send_cmd_work_fn);
+
+	/* Check that the output report looks ok - required for force feedback */
+	if (!hid_validate_values(hid, HID_OUTPUT_REPORT, 0, 0, 7)) {
+		hid_warn(hid, "No HID output report found, will try alternative methods for force feedback\n");
+		/* Try to use raw USB or feature reports instead */
+		entry->report = NULL;
+		/* For RS50, we'll try using raw USB control transfers or feature reports */
+		entry->use_raw_usb = 1;  /* Flag to use alternative communication */
+	} else {
+		entry->report = report;
+		entry->use_raw_usb = 0;
+	}
 	drv_data->device_props = entry;
 
 	/* Check if a multimode wheel has been connected and
@@ -2358,7 +2604,8 @@ int lg4ff_init(struct hid_device *hid)
 		}
 	}
 
-	/* Set supported force feedback capabilities */
+	/* Set supported force feedback capabilities - try even without output report */
+	/* For RS50, we'll try using raw USB/feature reports */
 	for (j = 0; lg4ff_devices[i].ff_effects[j] >= 0; j++)
 		set_bit(lg4ff_devices[i].ff_effects[j], dev->ffbit);
 
@@ -2366,14 +2613,25 @@ int lg4ff_init(struct hid_device *hid)
 
 	//__clear_bit(FF_RUMBLE, dev->ffbit);
 
-	if (error)
-		goto err_init;
+	if (error) {
+		hid_warn(hid, "Failed to create force feedback device, continuing with input-only\n");
+		/* Clear FF bits if FF creation failed */
+		for (j = 0; lg4ff_devices[i].ff_effects[j] >= 0; j++)
+		clear_bit(lg4ff_devices[i].ff_effects[j], dev->ffbit);
+		/* Continue without force feedback - input should still work */
+		error = 0;
+	}
 
-	ff = dev->ff;
-	ff->upload = lg4ff_upload_effect;
-	ff->playback = lg4ff_play_effect;
-	ff->set_gain = lg4ff_set_gain;
-	ff->destroy = lg4ff_destroy;
+	/* Enable force feedback if we have output report OR can use raw USB (with work queue) */
+	if ((entry->report || entry->use_raw_usb) && dev->ff) {
+		ff = dev->ff;
+		ff->upload = lg4ff_upload_effect;
+		ff->playback = lg4ff_play_effect;
+		ff->set_gain = lg4ff_set_gain;
+		ff->destroy = lg4ff_destroy;
+		hid_info(hid, "Force feedback enabled (method: %s)\n",
+			entry->report ? "HID output report" : "raw USB via work queue");
+	}
 
 	/* Initialize device properties */
 	if (mmode_ret == LG4FF_MMODE_IS_MULTIMODE) {
@@ -2382,11 +2640,12 @@ int lg4ff_init(struct hid_device *hid)
 	}
 	lg4ff_init_wheel_data(&entry->wdata, &lg4ff_devices[i], mmode_wheel, real_product_id);
 
+	/* Set up force feedback features - works with both output reports and raw USB */
 	set_bit(FF_GAIN, dev->ffbit);
 
 	/* Check if autocentering is available and
 	 * set the centering force to zero by default */
-	if (test_bit(FF_AUTOCENTER, dev->ffbit)) {
+	if (test_bit(FF_AUTOCENTER, dev->ffbit) && dev->ff) {
 		/* Formula Force EX expects different autocentering command */
 		if ((bcdDevice >> 8) == LG4FF_FFEX_REV_MAJ &&
 		    (bcdDevice & 0xff) == LG4FF_FFEX_REV_MIN)
@@ -2465,10 +2724,30 @@ int lg4ff_init(struct hid_device *hid)
 
 	/* Set the maximum range to start with */
 	entry->wdata.range = entry->wdata.max_range;
-	if (entry->wdata.set_range)
+	if (entry->wdata.set_range && (entry->report || entry->use_raw_usb))
 		entry->wdata.set_range(hid, entry->wdata.range);
 
-	lg4ff_init_slots(entry);
+	/* Initialize force feedback slots - works with both output reports and raw USB */
+	if (entry->report || entry->use_raw_usb)
+		lg4ff_init_slots(entry);
+
+	/* For RS50, try sending a test command during init to discover working method */
+	if (entry->use_raw_usb && hid->product == USB_DEVICE_ID_LOGITECH_RS50_WHEEL) {
+		u8 test_cmd[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+		hid_info(hid, "Testing RS50 force feedback communication methods...\n");
+		memcpy(entry->cmd_work.cmd, test_cmd, 7);
+		entry->cmd_work.report_id = 0;
+		entry->cmd_work.hid = entry->hid;
+		schedule_work(&entry->cmd_work.work);
+		flush_work(&entry->cmd_work.work); /* Wait for test to complete */
+		if (entry->working_method > 0) {
+			hid_info(hid, "RS50 force feedback communication method %d discovered\n", entry->working_method);
+		} else {
+			hid_warn(hid, "RS50 force feedback: no working communication method found.\n");
+			hid_warn(hid, "All methods returned EIO (-38). USB sniffer capture from Windows needed.\n");
+			hid_warn(hid, "Force feedback will not work until correct protocol is reverse-engineered.\n");
+		}
+	}
 
 	entry->effects_used = 0;
 	entry->wdata.master_gain = 0xffff;
@@ -2483,9 +2762,15 @@ int lg4ff_init(struct hid_device *hid)
 	hrtimer_setup(&entry->hrtimer, lg4ff_timer_hires, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 #endif
 
-	hid_info(hid, "Force feedback support for Logitech Gaming Wheels (%s)\n", VERSION);
-
-	hid_info(hid, "Hires timer: period = %d ms", timer_msecs);
+	if (entry->report) {
+		hid_info(hid, "Force feedback support for Logitech Gaming Wheels (%s)\n", VERSION);
+		hid_info(hid, "Hires timer: period = %d ms", timer_msecs);
+	} else if (entry->use_raw_usb) {
+		hid_info(hid, "Force feedback support for Logitech Gaming Wheels (%s) - using raw USB method\n", VERSION);
+		hid_info(hid, "Hires timer: period = %d ms", timer_msecs);
+	} else {
+		hid_info(hid, "Input-only support for Logitech Gaming Wheel (force feedback not available - no HID output report)\n");
+	}
 
 	return 0;
 
@@ -2512,6 +2797,9 @@ int lg4ff_deinit(struct hid_device *hid)
 		goto out; /* Nothing more to do */
 
 	hrtimer_cancel(&entry->hrtimer);
+	
+	/* Cancel any pending work */
+	cancel_work_sync(&entry->cmd_work.work);
 
 	/* Multimode devices will have at least the "MODE_NATIVE" bit set */
 	if (entry->wdata.alternate_modes) {

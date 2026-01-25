@@ -1,0 +1,125 @@
+# RS50 Testing Commands - Copy and Paste
+# Run each command one at a time in your terminal
+
+# ==========================================
+# STEP 1: Check if Driver is Loaded
+# ==========================================
+
+# Command 1.1: Check if module is loaded
+lsmod | grep "hid-logitech-new"
+
+# If nothing appears, load the module:
+sudo modprobe hid-logitech-new
+
+# Check again:
+lsmod | grep "hid-logitech-new"
+
+# Command 1.2: Check kernel messages
+dmesg | grep -i "logitech\|rs50" | tail -10
+
+
+# ==========================================
+# STEP 2: Find Your Wheel Device
+# ==========================================
+
+# Command 2.1: List input devices
+evtest
+
+# Look for device with "Logitech" or "RS50" in name
+# Write down the device number (e.g., event20)
+# Press Ctrl+C to exit
+
+
+# ==========================================
+# STEP 3: Test Basic Input Detection
+# ==========================================
+
+# Command 3.1: Test input (replace 20 with your device number)
+sudo evtest /dev/input/event20
+
+# Don't touch the wheel yet - watch for events
+# Values should be around 32670-32767
+# Keep this running for Steps 4-6!
+
+
+# ==========================================
+# STEP 4: Test Large Wheel Movements
+# ==========================================
+
+# While evtest is running:
+# 1. Rotate wheel FULL LEFT - note lowest value
+# 2. Rotate wheel FULL RIGHT - note highest value  
+# 3. Return to CENTER - note center value
+
+# Expected:
+# - Full left: 0-1000
+# - Center: ~32767 (32600-32900)
+# - Full right: 64535-65535
+
+
+# ==========================================
+# STEP 5: Test Buttons
+# ==========================================
+
+# While evtest is running:
+# Press each button on the wheel
+# Watch for EV_KEY events with value 1 (press) and 0 (release)
+
+
+# ==========================================
+# STEP 6: Test Pedals (if RS50 has them)
+# ==========================================
+
+# While evtest is running:
+# Press gas, brake, and clutch (if present)
+# Watch for ABS_Y, ABS_Z, or ABS_RZ events
+# Values should change when pressing pedals
+
+# Then exit evtest: Press Ctrl+C
+
+
+# ==========================================
+# STEP 7: Test in BeamNG.drive
+# ==========================================
+
+# In game (not terminal):
+# 1. Start BeamNG.drive
+# 2. Settings → Controls
+# 3. Select "Steering Wheel" or "Gamepad"
+# 4. Configure controls (rotate wheel, press pedals/buttons)
+# 5. Set Deadzone to 2-5%
+# 6. Test in game
+
+
+# ==========================================
+# STEP 8: Final Verification
+# ==========================================
+
+# Command 8.1: Check kernel messages
+dmesg | grep -i "logitech\|rs50" | tail -5
+
+# Command 8.2: Verify module still loaded
+lsmod | grep "hid-logitech-new"
+
+
+# ==========================================
+# QUICK REFERENCE COMMANDS
+# ==========================================
+
+# Check module:
+lsmod | grep "hid-logitech-new"
+
+# Load module:
+sudo modprobe hid-logitech-new
+
+# Find device:
+evtest
+
+# Check kernel messages:
+dmesg | grep -i "logitech\|rs50" | tail -10
+
+# Test input (replace 20 with your device number):
+sudo evtest /dev/input/event20
+
+# Check USB:
+lsusb | grep -i logitech
