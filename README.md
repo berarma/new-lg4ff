@@ -11,6 +11,7 @@ Supported devices:
 - Logitech WingMan Formula Force GP
 - Logitech Driving Force
 - Logitech MOMO Force Feedback Racing Wheel
+- Logitech RS50 Racing Wheel
 - Logitech Driving Force Pro
 - Logitech G25 Racing Wheel
 - Logitech Driving Force GT

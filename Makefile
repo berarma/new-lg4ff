@@ -1,8 +1,11 @@
-KVERSION := `uname -r`
-KDIR := /lib/modules/${KVERSION}/build
+KVERSION := $(shell uname -r)
+KDIR := /lib/modules/$(KVERSION)/build
+MODULE_NAME := hid-logitech-new
 
 default:
 	$(MAKE) -C $(KDIR) M=$$PWD
+
+build: default
 
 install: default
 	$(MAKE) -C $(KDIR) M=$$PWD modules_install
@@ -10,13 +13,13 @@ install: default
 
 remove:
 	rmmod hid-logitech 2> /dev/null || true
-	rmmod hid-logitech-new 2> /dev/null || true
+	rmmod $(MODULE_NAME) 2> /dev/null || true
 
-load: install remove
-	modprobe hid-logitech-new ${OPTIONS}
+load: default remove
+	insmod $(MODULE_NAME).ko ${OPTIONS}
 
-load_debug: install remove
-	modprobe hid-logitech-new dyndbg=+p ${OPTIONS}
+load_debug: default remove
+	insmod $(MODULE_NAME).ko dyndbg=+p ${OPTIONS}
 
 unload:
 	rmmod hid-logitech-new
